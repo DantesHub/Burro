@@ -1,0 +1,26 @@
+# Build products and local delivery
+.build/
+.swiftpm/
+dist/
+.backups/
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Locally generated system emoji artwork
+Resources/AppIcon.icns
+Resources/AppIcon.iconset/
+
+# Private development evidence and editor/agent state
+VALIDATION.md
+.codex/
+.claude/
+.env
+.env.*
+*.log
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.pem
+*.key

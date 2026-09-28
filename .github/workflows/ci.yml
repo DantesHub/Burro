@@ -1,0 +1,43 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  macos:
+    name: macOS build and tests
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: swift --version
+      - name: Swift tests (native panel tests require an interactive display)
+        run: swift test --skip NotchPanelTests
+      - name: Remote probe fixtures
+        run: python3 -B script/test_remote_probe.py
+      - name: Build app from source
+        run: CONFIGURATION=release ./script/build_and_run.sh --build-only
+      - name: Verify bundle signature and bundled remote probe
+        run: |
+          codesign --verify --deep --strict dist/Burro.app
+          swift script/verify_bundle.swift dist/Burro.app
+  linux-probe:
+    name: Linux remote probe tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 -B script/test_remote_probe.py

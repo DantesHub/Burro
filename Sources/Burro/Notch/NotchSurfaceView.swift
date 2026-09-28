@@ -1,0 +1,151 @@
+// Core Animation owns the changing outline/fades; two fixed SwiftUI hosts own accessible content.
+import AppKit
+import QuartzCore
+import SwiftUI
+import BurroCore
+
+@MainActor final class NotchSurfaceView: NSView {
+    let background = CAShapeLayer()
+    private let surfaceMask = CAShapeLayer()
+    private let content = FlippedNotchView()
+    private let compactHost: NSHostingView<NotchView>
+    private let expandedHost: NSHostingView<NotchView>
+    private var compactSize = CGSize(width: 108, height: 26)
+    private var expandedSize = CGSize(width: 480, height: 373)
+    private var motion = NotchMotion()
+    private var generation = UUID()
+    private(set) var isAnimating = false
+    private var expanded = false
+    override var isFlipped: Bool { true }
+
+    init(compact: NotchView, expanded: NotchView) {
+        compactHost = NSHostingView(rootView: compact)
+        expandedHost = NSHostingView(rootView: expanded)
+        super.init(frame: .zero)
+        wantsLayer = true
+        background.fillColor = NSColor.black.cgColor
+        layer?.addSublayer(background)
+        content.wantsLayer = true
+        addSubview(content)
+        content.layer?.mask = surfaceMask
+        for host in [compactHost, expandedHost] {
+            host.safeAreaRegions = []
+            host.sizingOptions = []
+            host.wantsLayer = true
+            content.addSubview(host)
+        }
+    }
+    required init?(coder: NSCoder) { nil }
+
+    func setContentSizes(compact: CGSize, expanded: CGSize) {
+        compactSize = compact; expandedSize = expanded
+        needsLayout = true
+    }
+    override func layout() {
+        super.layout()
+        withoutActions {
+            content.frame = bounds
+            compactHost.frame = CGRect(x: (bounds.width - compactSize.width) / 2, y: 0,
+                                       width: compactSize.width, height: compactSize.height)
+            expandedHost.frame = CGRect(x: (bounds.width - expandedSize.width) / 2, y: 0,
+                                        width: expandedSize.width, height: expandedSize.height)
+            background.frame = bounds
+            surfaceMask.frame = content.bounds
+            if !isAnimating { setModel(motion.sample(at: CACurrentMediaTime())) }
+        }
+    }
+    func transition(size: CGSize, expanded: Bool, animated: Bool, completion: @escaping @MainActor () -> Void) {
+        let now = CACurrentMediaTime()
+        motion.retarget(size: size, expanded: expanded, at: now, animated: animated)
+        self.expanded = expanded
+        let id = UUID(); generation = id
+        isAnimating = animated
+        layoutSubtreeIfNeeded()
+        compactHost.setAccessibilityHidden(expanded)
+        expandedHost.setAccessibilityHidden(!expanded)
+        let layers: [CALayer] = [background, surfaceMask, compactHost.layer!, expandedHost.layer!]
+        let end = motion.sample(at: now + motion.duration)
+        guard animated else {
+            withoutActions {
+                layers.forEach { $0.removeAllAnimations() }
+                setModel(end)
+            }
+            completion()
+            return
+        }
+
+        // Keyframes carry an analytic spring's position AND velocity across reversals. The render
+        // server interpolates them at its own refresh rate; no SwiftUI/window layout runs per frame.
+        let count = max(2, Int(ceil(motion.duration * 120)))
+        let samples = (0...count).map { motion.sample(at: now + motion.duration * Double($0) / Double(count)) }
+        let paths = samples.map { outline($0) }
+        let times = (0...count).map { NSNumber(value: Double($0) / Double(count)) }
+        func animation(_ key: String, values: [Any]) -> CAKeyframeAnimation {
+            let result = CAKeyframeAnimation(keyPath: key)
+            result.values = values; result.keyTimes = times
+            result.duration = motion.duration
+            result.beginTime = now
+            result.calculationMode = .linear
+            return result
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { [weak self] in
+            Task { @MainActor in
+                guard let self, self.generation == id else { return }
+                self.isAnimating = false
+                completion()
+            }
+        }
+        setModel(end)
+        background.add(animation("path", values: paths), forKey: "notch.path")
+        surfaceMask.add(animation("path", values: paths), forKey: "notch.path")
+        compactHost.layer?.add(animation("opacity", values: samples.map { compactOpacity($0.expansion) }), forKey: "notch.fade")
+        expandedHost.layer?.add(animation("opacity", values: samples.map { expandedOpacity($0.expansion) }), forKey: "notch.fade")
+        expandedHost.layer?.add(animation("transform.translation.y", values: samples.map { -6 * (1 - $0.expansion) }), forKey: "notch.lift")
+        CATransaction.commit()
+    }
+    func cancel() {
+        generation = UUID(); isAnimating = false
+        withoutActions { [background, surfaceMask, compactHost.layer, expandedHost.layer].forEach { $0?.removeAllAnimations() } }
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Layer opacity does not control NSView hit testing. Route only to the intended content.
+        let local = convert(point, from: superview)
+        let host = expanded ? expandedHost : compactHost
+        return host.hitTest(content.convert(local, from: self))
+    }
+    private func setModel(_ sample: NotchMotion.Sample) {
+        let path = outline(sample)
+        background.path = path; surfaceMask.path = path
+        compactHost.layer?.opacity = Float(compactOpacity(sample.expansion))
+        expandedHost.layer?.opacity = Float(expandedOpacity(sample.expansion))
+        expandedHost.layer?.transform = CATransform3DMakeTranslation(0, -6 * (1 - sample.expansion), 0)
+    }
+    private func compactOpacity(_ progress: Double) -> Double { max(0, 1 - progress * 3) }
+    private func expandedOpacity(_ progress: Double) -> Double { max(0, (progress - 0.12) / 0.88) }
+    private func outline(_ sample: NotchMotion.Sample) -> CGPath {
+        let rect = CGRect(x: (bounds.width - sample.size.width) / 2, y: 0, width: sample.size.width, height: sample.size.height)
+        let shoulder = min(8.0, rect.height / 3)
+        let radius = min(10 + 16 * sample.expansion, (rect.height - shoulder) / 2)
+        let left = rect.minX + shoulder, right = rect.maxX - shoulder
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: right, y: rect.minY + shoulder), control: CGPoint(x: right, y: rect.minY))
+        path.addLine(to: CGPoint(x: right, y: rect.maxY - radius))
+        path.addQuadCurve(to: CGPoint(x: right - radius, y: rect.maxY), control: CGPoint(x: right, y: rect.maxY))
+        path.addLine(to: CGPoint(x: left + radius, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: left, y: rect.maxY - radius), control: CGPoint(x: left, y: rect.maxY))
+        path.addLine(to: CGPoint(x: left, y: rect.minY + shoulder))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY), control: CGPoint(x: left, y: rect.minY))
+        path.closeSubpath()
+        return path
+    }
+    private func withoutActions(_ action: () -> Void) {
+        CATransaction.begin(); CATransaction.setDisableActions(true); action(); CATransaction.commit()
+    }
+}
+private final class FlippedNotchView: NSView {
+    override var isFlipped: Bool { true }
+}
