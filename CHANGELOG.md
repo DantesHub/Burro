@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 — Unreleased
+
+- Keep remote Claude chats active while their subagents or session-owned background commands are still running, even when the parent registry reports idle. Preserve permission requests, reject old/completed worker evidence, and suppress unread Done until work finishes.
+
 ## 0.4.0 — 2026-09-28
 
 First public source release.

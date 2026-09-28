@@ -1,5 +1,6 @@
 # Isolated cross-platform parser/probe fixtures; no SSH connections or provider accounts are used.
 import calendar
+from contextlib import closing
 import fcntl
 import importlib.util
 import json
@@ -20,6 +21,145 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def worker_event(self, sid, agent='worker-a', age=0, stop='tool_use', started=None):
+        from datetime import datetime, timezone
+        stamp = time.time() - age if started is None else started
+        return json.dumps(dict(type='assistant', isSidechain=True, sessionId=sid, agentId=agent,
+                               timestamp=datetime.fromtimestamp(stamp, timezone.utc).isoformat(),
+                               message=dict(stop_reason=stop, content='PRIVATE BODY')))
+
+    def test_worker_lifecycle_requires_explicit_identity_and_current_incarnation(self):
+        sid = '11111111-2222-4333-8444-555555555555'
+        now = time.time()
+        parse = lambda text, modified=now: probe.claude_worker_tail_state(text, sid, 'worker-a', now - 60, now, modified)
+        running = self.worker_event(sid)
+        self.assertEqual(parse(running), 'Working')
+        self.assertIsNone(parse(running + '\n' + self.worker_event(sid, stop='end_turn')))
+        self.assertIsNone(parse(running.replace(sid, 'another-session')))
+        self.assertIsNone(parse(running.replace('worker-a', 'different-agent')))
+        self.assertIsNone(parse(running.replace('true', 'false')))
+        self.assertIsNone(parse(self.worker_event(sid, age=120)))
+        self.assertEqual(parse(running, now - 130), 'Unknown')
+        self.assertIsNone(parse(self.worker_event(sid, started=now + 3600)))
+        self.assertEqual(parse('truncated lifecycle envelope'), 'Unknown')
+
+    def test_stale_unfinished_worker_remains_unknown_until_terminal_event(self):
+        sid = '11111111-2222-4333-8444-555555555555'
+        now = time.time()
+        old = self.worker_event(sid, age=300)
+        self.assertEqual(probe.claude_worker_tail_state(old, sid, 'worker-a', now - 600, now, now - 300), 'Unknown')
+        done = old + '\n' + self.worker_event(sid, age=200, stop='end_turn')
+        self.assertIsNone(probe.claude_worker_tail_state(done, sid, 'worker-a', now - 600, now, now - 200))
+
+    def test_task_descriptors_require_writable_owned_session_output(self):
+        sid = '11111111-2222-4333-8444-555555555555'
+        path = f'/private/tmp/claude-{os.getuid()}/project/{sid}/tasks/task-a.output'
+        lines = f'p11\nf1\naw\nn{path}\nf2\naw\nn{path}\n'
+        self.assertEqual(probe.claude_task_descriptors(lines, sid, {11}), {'task-a'})
+        self.assertEqual(probe.claude_task_descriptors(lines, sid, {22}), set())
+        self.assertEqual(probe.claude_task_descriptors(lines.replace('aw', 'ar'), sid, {11}), set())
+        self.assertEqual(probe.claude_task_descriptors(lines, 'other-session', {11}), set())
+        self.assertIsNone(probe.claude_task_id(path.replace('tasks', 'scratchpad'), sid))
+        self.assertIsNone(probe.claude_task_id(path.replace('/private/tmp/', '/untrusted/'), sid))
+        self.assertIsNone(probe.claude_task_id(path.replace('task-a.output', 'task-a.output (deleted)'), sid))
+        self.assertIsNone(probe.claude_task_id('/dev/pipe', sid))
+        self.assertEqual(probe.claude_descendants(10, {10: 1, 11: 10, 12: 11, 13: 99}), {11, 12})
+
+    def test_background_descriptor_probe_deduplicates_tasks_and_ignores_helpers(self):
+        sid = '11111111-2222-4333-8444-555555555555'
+        path = f'/tmp/claude-{os.getuid()}/project/{sid}/tasks/task-a.output'
+        result = subprocess.CompletedProcess([], 0, f'p11\nf1\naw\nn{path}\np12\nf1\naw\nn/dev/pipe\n', '')
+        with patch.object(probe.sys, 'platform', 'darwin'), patch.object(probe.subprocess, 'run', return_value=result) as run:
+            self.assertEqual(probe.claude_background_tasks(10, sid, {10: 1, 11: 10, 12: 10, 99: 88}), {'task-a'})
+            self.assertIn('11,12', run.call_args.args[0])
+            self.assertNotIn('99', run.call_args.args[0])
+
+    def test_linux_background_probe_checks_writable_descriptors_without_reading_output(self):
+        sid = '11111111-2222-4333-8444-555555555555'
+        output = f'/tmp/claude-{os.getuid()}/project/{sid}/tasks/task-a.output'
+        with patch.object(probe.sys, 'platform', 'linux'), patch.object(Path, 'read_text', return_value='flags: 0100001\n'), patch.object(probe.os, 'readlink', return_value=output):
+            self.assertEqual(probe.claude_background_tasks(10, sid, {10: 1, 11: 10}), {'task-a'})
+        with patch.object(probe.sys, 'platform', 'linux'), patch.object(Path, 'read_text', return_value='flags: 0100000\n'), patch.object(probe.os, 'readlink') as links:
+            self.assertEqual(probe.claude_background_tasks(10, sid, {10: 1, 11: 10}), set())
+            links.assert_not_called()
+        with patch.object(probe.sys, 'platform', 'linux'), patch.object(Path, 'read_text', side_effect=PermissionError()):
+            with self.assertRaises(OSError):
+                probe.claude_background_tasks(10, sid, {10: 1, 11: 10})
+
+    def delegated_fixture(self, home):
+        sid = '11111111-2222-4333-8444-555555555555'
+        registry = home / '.claude/sessions'; registry.mkdir(parents=True)
+        metadata = home / 'Library/Application Support/Claude/claude-code-sessions/account/org'
+        metadata.mkdir(parents=True)
+        (metadata / 'local_fixture.json').write_text(json.dumps(dict(sessionId='local_fixture', completedTurns=1, isArchived=False)))
+        record = dict(sessionId=sid, cwd='/repo', pid=123, status='idle', hostSessionId='local_fixture',
+                      startedAt=(time.time() - 600) * 1000, updatedAt=time.time() * 1000)
+        (registry / 'fixture.json').write_text(json.dumps(record))
+        return sid, registry / 'fixture.json', record
+
+    def test_collect_idle_parent_stays_working_for_background_task_then_completes(self):
+        with tempfile.TemporaryDirectory(prefix='burro-delegated-') as directory:
+            home = Path(directory); sid, path, record = self.delegated_fixture(home)
+            with patch.object(probe, 'claude_identity', return_value=True), patch.object(probe, 'claude_process_tree', return_value={123: 1, 124: 123}), patch.object(probe, 'claude_background_tasks', return_value={'task-a'}) as tasks:
+                result = probe.collect(home)
+                self.assertEqual(len(result['sessions']), 1)
+                self.assertEqual(result['sessions'][0]['state'], 'Working')
+                self.assertFalse(result['sessions'][0]['turnCompleted'])
+                self.assertIn('1 active delegated task', result['sessions'][0]['evidence'])
+                tasks.return_value = set()
+                result = probe.collect(home)
+                self.assertEqual(result['sessions'][0]['state'], 'Open · idle')
+                self.assertTrue(result['sessions'][0]['turnCompleted'])
+
+    def test_collect_waiting_parent_is_not_hidden_by_background_work(self):
+        with tempfile.TemporaryDirectory(prefix='burro-delegated-') as directory:
+            home = Path(directory); sid, path, record = self.delegated_fixture(home)
+            record['status'] = 'waiting_for_permission'; path.write_text(json.dumps(record))
+            with patch.object(probe, 'claude_identity', return_value=True), patch.object(probe, 'claude_background_tasks') as tasks:
+                result = probe.collect(home)
+                self.assertEqual(result['sessions'][0]['state'], 'Needs input')
+                self.assertFalse(result['sessions'][0]['turnCompleted'])
+                tasks.assert_not_called()
+
+    def test_collect_real_worker_file_promotes_parent_but_completed_and_foreign_workers_do_not(self):
+        with tempfile.TemporaryDirectory(prefix='burro-delegated-') as directory:
+            home = Path(directory); sid, path, record = self.delegated_fixture(home)
+            workers = home / '.claude/projects/project' / sid / 'subagents'; workers.mkdir(parents=True)
+            worker = workers / 'agent-worker-a.jsonl'
+            worker.write_text(self.worker_event(sid))
+            with patch.object(probe, 'claude_identity', return_value=True), patch.object(probe, 'claude_process_tree', return_value={123: 1}), patch.object(probe, 'claude_background_tasks', return_value=set()):
+                result = probe.collect(home)
+                self.assertEqual(result['sessions'][0]['state'], 'Working')
+                self.assertNotIn('PRIVATE BODY', json.dumps(result))
+                worker.write_text(self.worker_event(sid, stop='end_turn'))
+                self.assertEqual(probe.collect(home)['sessions'][0]['state'], 'Open · idle')
+                worker.write_text(self.worker_event('other-session'))
+                self.assertEqual(probe.collect(home)['sessions'][0]['state'], 'Open · idle')
+                worker.write_text(self.worker_event(sid, age=1200))
+                self.assertEqual(probe.collect(home)['sessions'][0]['state'], 'Open · idle')
+
+    def test_collect_dead_or_reused_parent_never_inherits_worker_activity(self):
+        with tempfile.TemporaryDirectory(prefix='burro-delegated-') as directory:
+            home = Path(directory); sid, path, record = self.delegated_fixture(home)
+            with patch.object(probe, 'claude_identity', return_value=False), patch.object(probe, 'claude_delegated_state') as delegated:
+                result = probe.collect(home)
+                self.assertEqual(result['sessions'][0]['state'], 'Inactive')
+                self.assertTrue(result['sessions'][0]['turnCompleted'])
+                delegated.assert_not_called()
+            with patch.object(probe, 'claude_identity', side_effect=[True, None]), patch.object(probe, 'claude_process_tree', return_value={123: 1}), patch.object(probe, 'claude_delegated_state', return_value=('Working', 1)):
+                result = probe.collect(home)
+                self.assertEqual(result['sessions'][0]['state'], 'Unknown')
+                self.assertFalse(result['sessions'][0]['turnCompleted'])
+
+    def test_incomplete_visibility_never_acknowledges_idle_parent_as_done(self):
+        with tempfile.TemporaryDirectory(prefix='burro-delegated-') as directory:
+            home = Path(directory); sid, path, record = self.delegated_fixture(home)
+            with patch.object(probe, 'claude_identity', return_value=True), patch.object(probe, 'claude_process_tree', side_effect=OSError()):
+                result = probe.collect(home)
+                self.assertEqual(result['sessions'][0]['state'], 'Unknown')
+                self.assertFalse(result['sessions'][0]['turnCompleted'])
+                self.assertTrue(result['warnings'])
+
     def test_parent_identity_is_explicit_and_validated(self):
         sid = '11111111-2222-4333-8444-555555555555'
         source = json.dumps({'subagent': {'thread_spawn': {'parent_thread_id': sid}}})
@@ -70,7 +210,7 @@ class ProbeTests(unittest.TestCase):
             rollout.write_text(json.dumps({'type': 'event_msg', 'payload': {'type': 'task_started'}}) + '\n' +
                                json.dumps({'type': 'response_item', 'payload': {'content': 'PRIVATE PROMPT BODY'}}) + '\n')
             database = codex / 'state_7.sqlite'
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 db.execute('CREATE TABLE threads (id TEXT,cwd TEXT,title TEXT,updated_at REAL,rollout_path TEXT,archived INTEGER)')
                 db.execute('INSERT INTO threads VALUES (?,?,?,?,?,0)', ('fixture', '/remote/space path', 'Codex fixture', time.time(), str(rollout)))
             before = database.read_bytes()
@@ -89,7 +229,7 @@ class ProbeTests(unittest.TestCase):
             home = Path(directory); codex = home / '.codex'; codex.mkdir()
             rollout = codex / 'done.jsonl'
             rollout.write_text(json.dumps({'type': 'event_msg', 'payload': {'type': 'task_complete'}}))
-            with sqlite3.connect(codex / 'state_7.sqlite') as db:
+            with closing(sqlite3.connect(codex / 'state_7.sqlite')) as db, db:
                 db.execute('CREATE TABLE threads (id TEXT,cwd TEXT,title TEXT,updated_at REAL,rollout_path TEXT,archived INTEGER)')
                 db.executemany('INSERT INTO threads VALUES (?,?,?,?,?,0)', [(f'fixture-{i}', '/repo', 'Done', i, str(rollout)) for i in range(3)])
             result = probe.collect(home)
@@ -101,7 +241,7 @@ class ProbeTests(unittest.TestCase):
             rollout.write_text(json.dumps({'type': 'event_msg', 'payload': {'type': 'task_aborted'}}))
             self.assertFalse(probe.codex_completed(rollout.read_text()))
             self.assertEqual(probe.collect(home)['sessions'], [])
-            with sqlite3.connect(codex / 'state_7.sqlite') as db:
+            with closing(sqlite3.connect(codex / 'state_7.sqlite')) as db, db:
                 db.execute('DELETE FROM threads')
             self.assertEqual(probe.collect(home)['sessions'], [])
 
@@ -114,7 +254,7 @@ class ProbeTests(unittest.TestCase):
             (metadata / 'local_fixture.json').write_text(json.dumps(dict(sessionId='local_fixture', completedTurns=1, isArchived=False)))
             record = dict(sessionId='cli-fixture', cwd='/repo', pid=123, status='idle', hostSessionId='local_fixture')
             (registry / 'fixture.json').write_text(json.dumps(record))
-            with patch.object(probe, 'claude_identity', return_value=True):
+            with patch.object(probe, 'claude_identity', return_value=True), patch.object(probe, 'claude_process_tree', return_value={123: 1}):
                 self.assertTrue(probe.collect(home)['sessions'][0]['turnCompleted'])
                 record['status'] = 'busy'
                 (registry / 'fixture.json').write_text(json.dumps(record))
@@ -123,7 +263,7 @@ class ProbeTests(unittest.TestCase):
     def test_checkpoint_fallback_refuses_live_journals(self):
         with tempfile.TemporaryDirectory(prefix='burro-probe-') as directory:
             database = Path(directory) / 'state.sqlite'
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 db.execute('CREATE TABLE threads (id TEXT,cwd TEXT,title TEXT,updated_at REAL,rollout_path TEXT,archived INTEGER)')
             original = sqlite3.connect
             calls = []
@@ -150,7 +290,7 @@ class ProbeTests(unittest.TestCase):
             home = Path(directory); codex = home / '.codex'; codex.mkdir()
             rollout = codex / 'done.jsonl'
             rollout.write_text(json.dumps({'type': 'event_msg', 'payload': {'type': 'task_complete'}}))
-            with sqlite3.connect(codex / 'state_5.sqlite') as db:
+            with closing(sqlite3.connect(codex / 'state_5.sqlite')) as db, db:
                 db.execute('CREATE TABLE threads (id TEXT,cwd TEXT,title TEXT,name TEXT,source TEXT,updated_at REAL,rollout_path TEXT,archived INTEGER)')
                 db.executemany('INSERT INTO threads VALUES (?,?,?,?,?,?,?,0)', [
                     ('chat', '/repo', 'Original prompt', 'Displayed chat name', 'vscode', 1, str(rollout)),

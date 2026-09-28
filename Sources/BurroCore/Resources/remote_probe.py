@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Read session metadata on a Mac/Linux SSH host; emit no credentials or transcript bodies."""
 import calendar
+from datetime import datetime
 import errno
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -140,6 +142,178 @@ def claude_identity(pid, expected):
 
 
 
+# Claude can report idle while an in-process agent or background command still runs.
+# Inspect only lifecycle envelopes and output-descriptor names; never read task output.
+def claude_worker_tail_state(tail, sid, agent_id, started, now, modified):
+    identified = False
+    for line in reversed(tail.splitlines()):
+        try:
+            event = json.loads(line)
+            if isinstance(event, dict) and isinstance(event.get("sessionId"), str) and isinstance(event.get("agentId"), str):
+                identified = True
+            if (not isinstance(event, dict) or event.get("sessionId") != sid
+                    or event.get("agentId") != agent_id or event.get("isSidechain") is not True):
+                continue
+            if event.get("type") not in ("assistant", "user"):
+                continue
+            stamp = datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00")).timestamp()
+            if not math.isfinite(stamp) or stamp < started - 2 or stamp > now + 5:
+                continue
+            message = event.get("message", {})
+            if not isinstance(message, dict):
+                continue
+            if event["type"] == "assistant" and message.get("stop_reason") in ("end_turn", "stop_sequence"):
+                return None
+            # Silence is not proof of completion. Retain uncertainty after fresh progress expires.
+            return "Working" if -5 <= now - stamp <= 120 and -5 <= now - modified <= 120 else "Unknown"
+        except (ValueError, KeyError, TypeError, AttributeError, OverflowError):
+            continue
+    return "Unknown" if tail.strip() and not identified else None
+
+
+def claude_worker_states(home, sid, started, now, deadline):
+    if not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", sid):
+        return []
+    root = home / ".claude/projects"
+    if not root.exists():
+        return []
+    states = []
+    # Registry cwd may change after worktree creation; parent UUID is the ownership boundary.
+    for index, project in enumerate(root.iterdir()):
+        if index >= 256 or time.monotonic() > deadline:
+            return states + ["Unknown"]
+        if not project.is_dir() or project.is_symlink():
+            continue
+        directory = project / sid / "subagents"
+        if not directory.is_dir() or directory.is_symlink() or directory.parent.is_symlink():
+            continue
+        for count, path in enumerate(directory.glob("agent-*.jsonl")):
+            if count >= 64 or time.monotonic() > deadline:
+                return states + ["Unknown"]
+            agent_id = path.stem[len("agent-"):]
+            if path.is_symlink() or not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", agent_id):
+                continue
+            try:
+                with path.open("rb") as handle:
+                    modified = os.fstat(handle.fileno()).st_mtime
+                    if modified < started - 2:
+                        continue
+                    handle.seek(0, 2)
+                    handle.seek(max(0, handle.tell() - TAIL_LIMIT))
+                    tail = handle.read(TAIL_LIMIT).decode("utf-8", errors="replace")
+                state = claude_worker_tail_state(tail, sid, agent_id, started, now, modified)
+                if state:
+                    states.append(state)
+            except OSError:
+                states.append("Unknown")
+    return states
+
+
+def claude_process_tree():
+    result = subprocess.run(["/bin/ps", "-axo", "uid=,pid=,ppid="], capture_output=True,
+                            text=True, timeout=1, env=dict(os.environ, LC_ALL="C", LANG="C"))
+    if result.returncode != 0:
+        raise OSError("Process tree unavailable")
+    rows = {}
+    for line in result.stdout.splitlines():
+        values = line.split()
+        if len(values) == 3 and all(v.isdigit() for v in values) and int(values[0]) == os.getuid():
+            rows[int(values[1])] = int(values[2])
+    return rows
+
+
+def claude_descendants(parent, rows):
+    found, frontier = set(), {parent}
+    for _ in range(32):
+        children = {pid for pid, ppid in rows.items() if ppid in frontier and pid not in found and pid != parent}
+        if not children:
+            return found
+        found.update(children)
+        if len(found) > 256:
+            raise OSError("Descendant inspection limit")
+        frontier = children
+    raise OSError("Descendant depth limit")
+
+
+def claude_task_id(path, sid):
+    # Exact session-scoped Claude task output, not arbitrary child processes or shared cwd.
+    parts = Path(path).parts
+    if (len(parts) < 6 or parts[-3:-1] != (sid, "tasks")
+            or not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}\.output", parts[-1])
+            or parts[-5] != "claude-" + str(os.getuid())):
+        return None
+    if Path(*parts[:-5]) not in (Path("/tmp"), Path("/private/tmp")):
+        return None
+    return Path(parts[-1]).stem
+
+
+def claude_task_descriptors(output, sid, descendants):
+    tasks, pid, writable = set(), None, False
+    for line in output.splitlines():
+        if line.startswith("p"):
+            pid = int(line[1:]) if line[1:].isdigit() else None
+            writable = False
+        elif line.startswith("f"):
+            writable = False
+        elif line.startswith("a"):
+            writable = line[1:] in ("w", "u")
+        elif line.startswith("n") and pid in descendants and writable:
+            task = claude_task_id(line[1:], sid)
+            if task:
+                tasks.add(task)
+    return tasks
+
+
+def claude_background_tasks(pid, sid, rows):
+    if pid not in rows:
+        raise OSError("Parent process is absent from the inspection snapshot")
+    descendants = claude_descendants(pid, rows)
+    if not descendants:
+        return set()
+    if sys.platform == "darwin":
+        result = subprocess.run(["/usr/sbin/lsof", "-a", "-p", ",".join(map(str, sorted(descendants))),
+                                 "-d", "1,2", "-Fpfan"], capture_output=True, text=True, timeout=1)
+        if result.returncode not in (0, 1) or result.stderr.strip():
+            raise OSError("Task descriptors unavailable")
+        return claude_task_descriptors(result.stdout, sid, descendants)
+    tasks = set()
+    for child in descendants:
+        for fd in ("1", "2"):
+            try:
+                root = Path("/proc") / str(child)
+                flags = next(line.split()[1] for line in (root / "fdinfo" / fd).read_text().splitlines() if line.startswith("flags:"))
+                if int(flags, 8) & os.O_ACCMODE not in (os.O_WRONLY, os.O_RDWR):
+                    continue
+                task = claude_task_id(os.readlink(root / "fd" / fd), sid)
+                if task:
+                    tasks.add(task)
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            except (PermissionError, ValueError, StopIteration):
+                raise OSError("Task descriptors unavailable")
+    return tasks
+
+
+def claude_delegated_state(home, record, live, now, deadline, process_rows):
+    if live is not True:
+        return None, 0
+    sid = record["sessionId"]
+    states = []
+    try:
+        started = float(record.get("startedAt", 0)) / 1000
+        # Without an incarnation boundary, old worker logs cannot imply live work.
+        if math.isfinite(started) and started > 0:
+            states = claude_worker_states(home, sid, started, now, deadline)
+        if time.monotonic() > deadline or process_rows is False:
+            raise OSError("Background process visibility is incomplete")
+        tasks = claude_background_tasks(record["pid"], sid, process_rows)
+        if tasks or "Working" in states:
+            return "Working", len(tasks) + states.count("Working")
+        return ("Unknown", 0) if "Unknown" in states else (None, 0)
+    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+        return ("Working", states.count("Working")) if "Working" in states else ("Unknown", 0)
+
+
 def codex_is_subagent(source):
     if source in ('subagent', '"subagent"'):
         return True
@@ -250,6 +424,7 @@ def collect(home):
         try:
             files = list(claude.glob("*.json"))
             completed = claude_completed(home)
+            process_rows = None
             if len(files) > LIMIT:
                 warnings.append("Claude session records exceed the inspection limit.")
             for path in files[:LIMIT]:
@@ -265,13 +440,32 @@ def collect(home):
                         raise ValueError("Invalid session identity")
                     live = claude_identity(pid, record.get("procStart"))
                     state = claude_state(record.get("status", ""), live)
+                    delegated, delegated_count = None, 0
+                    if live is True and state == "Open · idle":
+                        if process_rows is None:
+                            try:
+                                process_rows = claude_process_tree()
+                            except (OSError, subprocess.TimeoutExpired):
+                                process_rows = False
+                                warnings.append("Claude background process visibility is limited on this host.")
+                        delegated, delegated_count = claude_delegated_state(home, record, live, now, deadline, process_rows)
+                        if delegated:
+                            # Recheck the parent incarnation after inspecting its descendants.
+                            if claude_identity(pid, record.get("procStart")) is True:
+                                state = delegated
+                            else:
+                                state = "Unknown"
                     desktop_id = record.get("hostSessionId")
-                    has_result = isinstance(desktop_id, str) and desktop_id in completed and record.get("status") == "idle"
+                    has_result = isinstance(desktop_id, str) and desktop_id in completed and record.get("status") == "idle" and state in ("Open · idle", "Inactive")
                     if state != "Inactive" or has_result:
                         updated = float(record.get("updatedAt", record.get("startedAt", 0))) / 1000
                         sessions.append(session("claude:" + sid, "Claude Code", record.get("name") or "Claude Code session",
                                                 cwd, state, updated, "Remote PID/start-time identity and reported session status.", pid=pid if live else None))
                         sessions[-1]["turnCompleted"] = has_result
+                        if delegated == "Working" and state == "Working":
+                            sessions[-1]["evidence"] = "Verified Claude process with %d active delegated task(s); parent reports idle." % delegated_count
+                        elif delegated == "Unknown":
+                            sessions[-1]["evidence"] = "Claude reports idle; delegated work could not be confirmed complete."
                         for source, target in (("hostSessionId", "claudeDesktopSessionID"),
                                                ("bridgeSessionId", "claudeBridgeSessionID")):
                             value = record.get(source)

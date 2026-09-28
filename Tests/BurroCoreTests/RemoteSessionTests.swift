@@ -42,6 +42,31 @@ final class RemoteSessionTests: XCTestCase {
         XCTAssertEqual(feed.workingCount, 2)
         XCTAssertEqual(feed.waitingCount, 2)
     }
+    func testDelegatedClaudeParentAppearsOnceAndCannotBecomeDoneWhileWorkRemains() throws {
+        let host = RemoteHost(name: "Laptop", destination: "laptop")
+        let data = Data("""
+        {"version":1,"warnings":[],"sessions":[
+          {"id":"claude:parent","provider":"Claude Code","title":"Delegated work","cwd":"/repo",
+           "attachedPaths":[],"state":"Working","updatedAt":1800000000,"pinned":false,
+           "evidence":"Verified delegated work; parent reports idle","turnCompleted":false,
+           "claudeBridgeSessionID":"session_fixture"}
+        ]}
+        """.utf8)
+        let snapshot = try RemoteAgentMonitor.decode(data, host: host, receivedAt: now)
+        var unread = ProviderReadState.empty
+        unread.claudeUnread = ["session_fixture"]
+        let sessions = snapshot.displaySessions(now: now).map { unread.applying(to: $0) }
+        let activity = AgentActivitySnapshot(sessions: sessions, warnings: [], sampledAt: now)
+        XCTAssertEqual(activity.workingCount, 1)
+        XCTAssertEqual(activity.doneCount, 0)
+        let feed = NotchFeed(sessions: sessions, includeIdle: false)
+        XCTAssertEqual(feed.groups.count, 1)
+        XCTAssertEqual(feed.groups.first?.root?.title, "Delegated work")
+        let stale = snapshot.displaySessions(now: now.addingTimeInterval(31)).map { unread.applying(to: $0) }
+        XCTAssertEqual(AgentActivitySnapshot(sessions: stale, warnings: [], sampledAt: now).workingCount, 0)
+        XCTAssertFalse(stale[0].isDone)
+    }
+
     func testOfflineSessionsBecomeLastSeenAndStopCountingAsWorking() throws {
         let host = RemoteHost(name: "Laptop", destination: "laptop")
         let online = try RemoteAgentMonitor.decode(payload(), host: host, receivedAt: now)
