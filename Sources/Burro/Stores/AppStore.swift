@@ -225,6 +225,26 @@ import BurroCore
         rebuildAgentActivity()
         if selection == nil || !result.worktrees.contains(where: { $0.id == selection }) { selection = visibleWorktrees.first?.id }
     }
+    func deleteMergedWorktree(_ item: NotchCleanup) async -> String? {
+        guard item.id.hasPrefix("local:"), !scanning else {
+            return "Wait for the current scan to finish. Remote removal is not supported yet."
+        }
+        scanning = true
+        defer { scanning = false }
+        let config = ScanConfiguration(repositories: repositories, discover: discover, protectedPaths: protectedPaths, baseOverrides: baseOverrides)
+        let fresh = await Task.detached(priority: .userInitiated) { await Scanner().scan(config) }.value
+        snapshot = fresh
+        guard var tree = fresh.worktrees.first(where: { $0.path == item.path }) else {
+            rebuildAgentActivity()
+            return "This worktree is no longer registered."
+        }
+        tree.protectedByUser = protectedPaths.contains(tree.path)
+        let error = await Task.detached(priority: .userInitiated) { [tree] in WorktreeRemoval.remove(tree) }.value
+        if error == nil { snapshot.worktrees.removeAll { $0.path == item.path } }
+        rebuildAgentActivity()
+        return error
+    }
+
     func protect(_ tree: Worktree) {
         if protectedPaths.contains(tree.path) { protectedPaths.remove(tree.path) } else { protectedPaths.insert(tree.path) }
         // Apply protection immediately, then rescan all other evidence.
