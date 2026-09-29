@@ -8,6 +8,15 @@ final class NotchFeedTests: XCTestCase {
         AgentSession(id: id, provider: .codex, title: id, cwd: "/same/repo", state: state,
             updatedAt: Date(timeIntervalSince1970: 100), evidence: "fixture", isSubagent: child, parentSessionID: parent)
     }
+    func testHoverPreviewCapsAtFiveChatsAndReportsRemainder() {
+        for count in [1, 5, 12] {
+            let sessions = (0..<count).map { agent("chat-\($0)") }
+            let workspace = NotchWorkspace.grouped(NotchFeed(sessions: sessions, includeIdle: false).groups) { $0.cwd }[0]
+            XCTAssertEqual(workspace.previewGroups.count, min(5, count))
+            XCTAssertEqual(workspace.previewOverflow, max(0, count - 5))
+            XCTAssertEqual(workspace.groups.count, count)
+        }
+    }
     func testProjectSectionsKeepDistinctRepositoriesAndHostsSeparate() {
         var first = agent("first"), linked = agent("linked"), other = agent("other"), remote = agent("remote")
         first.cwd = "/repo/main"; linked.cwd = "/worktrees/feature"; other.cwd = "/other/main"; remote.cwd = first.cwd

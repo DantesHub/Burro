@@ -58,7 +58,7 @@ struct NotchView: View {
         .onChange(of: activity.sessions) { _, _ in reconcile() }
         .onChange(of: presentation.holdingList) { _, _ in reconcile() }
         .onChange(of: presentation.expanded) { _, expanded in
-            if !expanded { showingHealth = false }
+            if !expanded { showingHealth = false; hoveredWorkspace = nil }
             reconcile(force: !expanded)
         }
         .onChange(of: presentation.includeIdle) { _, _ in reconcile(force: true) }
@@ -205,24 +205,39 @@ struct NotchView: View {
                             .foregroundStyle(.white.opacity(0.9))
                         Text(workspace.status.rawValue).foregroundStyle(workspace.status.color)
                     }.fixedSize(horizontal: true, vertical: false)
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(.secondary)
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .foregroundStyle(.secondary).frame(width: 24, height: 40)
+                        .contentShape(Rectangle())
+                        .onHover { inside in
+                            if inside { hoveredWorkspace = workspace.id }
+                        }
+                        .popover(isPresented: Binding(get: { hoveredWorkspace == workspace.id },
+                            set: { if !$0 { hoveredWorkspace = nil } }), arrowEdge: .trailing) {
+                            workspacePreview(workspace, session: session)
+                        }
+                        .accessibilityLabel("Preview chats")
                 }.font(.system(size: 10, weight: .medium))
                     .padding(.horizontal, 10).frame(height: 56).contentShape(Rectangle())
             }.buttonStyle(.plain)
-                .help(store.workspacePath(for: session) + "\nClick to expand chats; hover to preview")
-                .onHover { inside in
-                    if inside && !expanded { hoveredWorkspace = workspace.id }
-                }
-                .popover(isPresented: Binding(get: { hoveredWorkspace == workspace.id },
-                    set: { if !$0 { hoveredWorkspace = nil } }), arrowEdge: .trailing) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(store.workspaceTitle(for: session)).font(.headline)
-                        Text(store.workspacePath(for: session)).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                        ScrollView { VStack(spacing: 0) { workspaceChats(workspace) } }
-                            .frame(height: min(CGFloat(workspace.groups.count) * 56, 392))
-                    }.padding(12).frame(width: 480).preferredColorScheme(.dark)
-                }
+                .accessibilityHint("Click to expand chats; hover over the far-right chevron to preview")
         }
+    }
+    private func workspacePreview(_ workspace: NotchWorkspace, session: AgentSession) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(store.workspaceTitle(for: session)).font(.headline).lineLimit(1)
+            Text(store.workspacePath(for: session)).font(.caption).foregroundStyle(.secondary)
+                .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+            VStack(spacing: 0) {
+                ForEach(workspace.previewGroups) { group in groupRow(group) }
+            }
+            if workspace.previewOverflow > 0 {
+                Button("+\(workspace.previewOverflow) more — show all chats") {
+                    hoveredWorkspace = nil
+                    expandedWorkspaces.insert(workspace.id)
+                }.buttonStyle(.plain).font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(NotchStyle.accent).padding(.vertical, 6)
+            }
+        }.padding(12).frame(width: 480).preferredColorScheme(.dark)
     }
     @ViewBuilder private func groupRow(_ group: NotchGroup) -> some View {
         if let session = group.root {

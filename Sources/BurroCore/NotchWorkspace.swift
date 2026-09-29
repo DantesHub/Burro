@@ -4,6 +4,8 @@ import Foundation
 public struct NotchWorkspace: Identifiable, Sendable {
     public var id: String
     public var groups: [NotchGroup]
+    public var previewGroups: [NotchGroup] { Array(groups.prefix(5)) }
+    public var previewOverflow: Int { max(0, groups.count - 5) }
     public var sessions: [AgentSession] { groups.flatMap(\.members) }
     public var status: WorkspaceStatus {
         let live = groups.flatMap { group in group.members.filter { !group.unavailableIDs.contains($0.id) && $0.remote?.stale != true } }
