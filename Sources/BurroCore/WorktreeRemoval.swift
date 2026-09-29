@@ -31,8 +31,12 @@ public enum WorktreeRemoval {
               facts.changed == 0, facts.untracked == 0, !facts.operationInProgress else {
             return "Worktree changed or contains local data. Nothing was deleted; inspect it in Burro."
         }
-        let result = runner.git(tree.repositoryPath, ["worktree", "remove", "--", tree.path])
-        guard result.succeeded else { return "Git refused removal: " + (result.error.isEmpty ? "Refresh and check the worktree." : result.error) }
+        // Recursive filesystem deletion must not inherit the inspection deadline.
+        let result = CommandRunner().git(tree.repositoryPath, ["worktree", "remove", "--", tree.path], timeout: 600)
+        if result.timedOut {
+            return "Removal exceeded ten minutes and may be partially complete. Refresh to inspect the remaining folder and Git registration before retrying."
+        }
+        guard result.succeeded else { return "Git refused removal: " + (result.error.isEmpty ? "Git exited with code \(result.code). Refresh to inspect the folder and registration." : result.error) }
         return nil
     }
 }
