@@ -22,12 +22,15 @@ struct NotchView: View {
     private var workspaces: [NotchWorkspace] {
         NotchWorkspace.grouped(list.groups) { store.workspacePath(for: $0) }
     }
+    private var projects: [NotchProject] {
+        NotchProject.grouped(workspaces) { store.projectPath(for: $0) }
+    }
     private var summary: WorkspaceSummary {
         WorkspaceSummary(NotchWorkspace.grouped(NotchFeed(sessions: activity.sessions,
             includeIdle: presentation.includeIdle).groups) { store.workspacePath(for: $0) })
     }
     private var rowCount: Int {
-        workspaces.reduce(0) { total, workspace in
+        projects.count + workspaces.reduce(0) { total, workspace in
             total + 1 + (expandedWorkspaces.contains(workspace.id)
                 ? workspace.groups.reduce(0) { $0 + 1 + (expandedGroups.contains($1.id) ? $1.workers.count : 0) } : 0)
         }
@@ -137,14 +140,29 @@ struct NotchView: View {
             else if list.groups.isEmpty { empty }
             else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(workspaces) { workspace in
-                            workspaceRow(workspace)
-                            if expandedWorkspaces.contains(workspace.id) {
-                                workspaceChats(workspace).padding(.leading, 14)
-                            }
+                    LazyVStack(spacing: 14) {
+                        ForEach(projects) { project in
+                            VStack(spacing: 0) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "folder.fill").foregroundStyle(NotchStyle.accent)
+                                    Text(project.name).font(.system(size: 12, weight: .bold)).lineLimit(1)
+                                    Spacer(minLength: 4)
+                                    Text("\(project.machine) · \(project.workspaces.count) \(project.workspaces.count == 1 ? "worktree" : "worktrees")")
+                                        .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                                }.padding(.horizontal, 12).frame(height: 36)
+                                    .background(.white.opacity(0.06)).help(project.path)
+                                Rectangle().fill(.white.opacity(0.09)).frame(height: 1)
+                                ForEach(project.workspaces) { workspace in
+                                    workspaceRow(workspace)
+                                    if expandedWorkspaces.contains(workspace.id) {
+                                        workspaceChats(workspace).padding(.leading, 14)
+                                    }
+                                }
+                            }.background(.white.opacity(0.025))
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.09), lineWidth: 1))
                         }
-                    }.padding(.horizontal, 12).padding(.vertical, 4)
+                    }.padding(.horizontal, 12).padding(.vertical, 10)
                 }.scrollIndicators(.automatic)
             }
             footer

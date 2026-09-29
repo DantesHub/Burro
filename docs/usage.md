@@ -107,7 +107,7 @@ Completed, still-open chats with pending delivery work remain visible after bein
 
 ### Worktree groups in the notch
 
-The notch groups visible chats by machine and checkout path. Rows show the actual branch when known, machine, folder name, chat count, and upstream behind count. Hover to preview chats, or click to expand. Full checkout paths appear in previews and tooltips. Different hosts and paths remain separate even with matching branch names; discovered local ownership and remotely probed Git roots resolve nested working directories.
+The notch separates projects into bordered sections with bold folder headers, machine names, worktree totals, and spacing between repositories. Project identity uses the repository root locally and the common Git directory remotely, so linked worktrees stay together; separate machines remain labeled sections. Within each project, the notch groups visible chats by machine and checkout path. Rows show the actual branch when known, machine, folder name, chat count, and upstream behind count. Hover to preview chats, or click to expand. Full checkout paths appear in previews and tooltips. Different hosts and paths remain separate even with matching branch names; discovered local ownership and remotely probed Git roots resolve nested working directories.
 
 Header and compact-notch counts represent worktree groups, not chats. Each group contributes to exactly one status: needs input, running, scheduled, unknown, or its completed Git/done state. A checkout with multiple running chats counts as one running worktree. Chat counts remain in group subtitles. The total describes the visible checkout groups, not the entire Git worktree inventory.
 

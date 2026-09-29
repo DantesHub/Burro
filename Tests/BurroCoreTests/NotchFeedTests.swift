@@ -8,6 +8,16 @@ final class NotchFeedTests: XCTestCase {
         AgentSession(id: id, provider: .codex, title: id, cwd: "/same/repo", state: state,
             updatedAt: Date(timeIntervalSince1970: 100), evidence: "fixture", isSubagent: child, parentSessionID: parent)
     }
+    func testProjectSectionsKeepDistinctRepositoriesAndHostsSeparate() {
+        var first = agent("first"), linked = agent("linked"), other = agent("other"), remote = agent("remote")
+        first.cwd = "/repo/main"; linked.cwd = "/worktrees/feature"; other.cwd = "/other/main"; remote.cwd = first.cwd
+        remote.remote = RemoteOrigin(hostID: UUID(), hostName: "Remote", sampledAt: Date(), stale: false)
+        let workspaces = NotchWorkspace.grouped(NotchFeed(sessions: [first, linked, other, remote], includeIdle: false).groups) { $0.cwd }
+        let projects = NotchProject.grouped(workspaces) { $0.id == "other" ? "/other/main" : "/repo/main" }
+        XCTAssertEqual(projects.count, 3)
+        XCTAssertEqual(projects.first { $0.path == "/repo/main" && $0.machine == "This Mac" }?.workspaces.count, 2)
+        XCTAssertEqual(projects.first { $0.machine == "Remote" }?.workspaces.count, 1)
+    }
     func testHeaderCountsWorkspacesOnceWithLiveStatePriority() {
         var first = agent("one", .idle), second = agent("two", .idle), running = agent("running", .working)
         for index in 0..<2 {

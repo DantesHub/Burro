@@ -43,6 +43,10 @@ def delivery_details(path, deadline):
         if not root:
             return result
         result["checkoutPath"] = root
+        common = value("rev-parse", "--git-common-dir")
+        if common:
+            common = (Path(path) / common).resolve()
+            result["repositoryPath"] = str(common.parent if common.name == ".git" else common)
         branch = value("symbolic-ref", "--quiet", "--short", "HEAD")
         if branch:
             result["checkoutBranch"] = branch

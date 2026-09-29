@@ -64,3 +64,27 @@ public struct WorkspaceSummary: Sendable {
     public var pendingCount: Int { count(.uncommitted) + count(.needsPush) + count(.needsMerge) + count(.behind) + count(.inProgress) }
     public var attentionCount: Int { waitingCount + pendingCount + doneCount }
 }
+
+// Repository identity comes from the common Git directory, not a display name.
+public struct NotchProject: Identifiable, Sendable {
+    public var id: String
+    public var path: String
+    public var machine: String
+    public var workspaces: [NotchWorkspace]
+    public var name: String { URL(fileURLWithPath: path).lastPathComponent }
+    public static func grouped(_ workspaces: [NotchWorkspace], repository: (AgentSession) -> String) -> [Self] {
+        var result: [Self] = []
+        var indices: [String: Int] = [:]
+        for workspace in workspaces {
+            guard let session = workspace.sessions.first else { continue }
+            let path = repository(session)
+            let key = (session.remote?.hostID.uuidString ?? "local") + ":" + path
+            if let index = indices[key] { result[index].workspaces.append(workspace) }
+            else {
+                indices[key] = result.count
+                result.append(Self(id: key, path: path, machine: session.remote?.hostName ?? "This Mac", workspaces: [workspace]))
+            }
+        }
+        return result
+    }
+}

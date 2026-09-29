@@ -112,6 +112,10 @@ import BurroCore
         // Remote paths must never be resolved against this Mac's filesystem.
         return ((session.checkoutPath ?? session.cwd) as NSString).standardizingPath
     }
+    func projectPath(for session: AgentSession) -> String {
+        if let tree = worktree(for: session) { return tree.repositoryPath }
+        return session.repositoryPath ?? workspacePath(for: session)
+    }
     func workspaceTitle(for session: AgentSession) -> String {
         if let tree = worktree(for: session) { return tree.branch }
         return session.checkoutBranch ?? URL(fileURLWithPath: workspacePath(for: session)).lastPathComponent
