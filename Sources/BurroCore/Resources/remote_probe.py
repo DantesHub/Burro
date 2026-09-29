@@ -154,6 +154,33 @@ def delivery_details(path, deadline):
             if counts:
                 ahead, behind = map(int, counts.split())
                 result["upstreamBehind"] = behind
+        symbolic = value("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+        choices = ([symbolic] if symbolic else []) + ["origin/main", "origin/master", "origin/staging"]
+        base = next((candidate for candidate in choices
+                     if value("rev-parse", "--verify", "--end-of-options", candidate + "^{commit}")), None)
+        if base:
+            diff = value("diff", "--numstat", "--no-renames", "--merge-base", base, "--")
+            if diff is not None:
+                added = removed = 0
+                for line in diff.splitlines():
+                    fields = line.split('\t')
+                    if len(fields) >= 2 and fields[0].isdigit() and fields[1].isdigit():
+                        added += int(fields[0]); removed += int(fields[1])
+                untracked = value("ls-files", "--others", "--exclude-standard", "-z")
+                if untracked is not None:
+                    for name in untracked.split('\0'):
+                        if not name or time.monotonic() > deadline:
+                            continue
+                        file = Path(root) / name
+                        try:
+                            if file.is_symlink() or not file.is_file() or file.stat().st_size >= 8 * 1024 * 1024:
+                                continue
+                            data = file.read_bytes()
+                            if b'\0' not in data:
+                                added += len(data.decode('utf-8').splitlines())
+                        except (OSError, UnicodeError):
+                            pass
+                result["workspaceDiff"] = dict(hasEdits=added + removed > 0, added=added, removed=removed, exact=True)
         status = git("status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=none")
         directory = value("rev-parse", "--absolute-git-dir")
         if directory and common:
@@ -169,10 +196,6 @@ def delivery_details(path, deadline):
         unpublished = int(unpushed) if unpushed is not None else None
         if (ahead if ahead is not None else unpublished or 0) > 0:
             return finish("Needs push")
-        symbolic = value("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
-        choices = ([symbolic] if symbolic else []) + ["origin/main", "origin/master", "origin/staging"]
-        base = next((candidate for candidate in choices
-                     if value("rev-parse", "--verify", "--end-of-options", candidate + "^{commit}")), None)
         if branch and (branch in ("main", "master", "staging", "develop", "development") or (base is not None and base == upstream)):
             return finish(("Needs pull" if behind > 0 else "Done") if upstream and ahead == 0 and behind is not None else None)
         if branch and not upstream:

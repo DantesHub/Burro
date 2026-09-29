@@ -64,6 +64,25 @@ public struct GitReader: Sendable {
             facts.ignored = Array(entries.prefix(12)); facts.ignoredCount = entries.count
         } else { facts.errors.append("Ignored files could not be checked") }
         if let base {
+            let diff = runner.git(record.path, ["diff", "--numstat", "--no-renames", "--merge-base", base, "--"])
+            if diff.succeeded {
+                var added = 0, removed = 0
+                for line in diff.output.split(separator: "\n") {
+                    let fields = line.split(separator: "\t")
+                    if fields.count >= 2, let a = Int(fields[0]), let r = Int(fields[1]) { added += a; removed += r }
+                }
+                let untracked = runner.git(record.path, ["ls-files", "--others", "--exclude-standard", "-z"])
+                if untracked.succeeded {
+                    for name in untracked.output.split(separator: "\0") {
+                        let url = URL(fileURLWithPath: record.path).appendingPathComponent(String(name))
+                        let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+                        guard values?.isRegularFile == true, values?.isSymbolicLink != true, (values?.fileSize ?? Int.max) < 8 * 1024 * 1024,
+                              let data = try? Data(contentsOf: url), !data.contains(0), let text = String(data: data, encoding: .utf8) else { continue }
+                        added += text.isEmpty ? 0 : text.split(separator: "\n", omittingEmptySubsequences: false).count - (text.hasSuffix("\n") ? 1 : 0)
+                    }
+                }
+                facts.workspaceDiff = ChatEdits(hasEdits: added + removed > 0, added: added, removed: removed, exact: true)
+            }
             let merged = runner.git(record.path, ["merge-base", "--is-ancestor", "HEAD", base])
             if !merged.timedOut && [0, 1].contains(merged.code) { facts.merged = merged.code == 0 }
         }

@@ -254,15 +254,15 @@ struct NotchView: View {
                         Text(store.workspaceTitle(for: session)).font(.system(size: 12, weight: .medium)).lineLimit(1)
                         Text("\(session.remote?.hostName ?? "This Mac") · \(URL(fileURLWithPath: store.workspacePath(for: session)).lastPathComponent)\(behind > 0 ? " · Behind by \(behind)" : "")")
                             .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                        if let edits = workspace.editTotals {
+                        if let edits = workspace.sessions.compactMap(\.workspaceDiff).first {
                             HStack(spacing: 4) {
                                 if edits.added + edits.removed > 0 || edits.exact {
                                     Text("+\(edits.added)").foregroundStyle(.green)
                                     Text("−\(edits.removed)").foregroundStyle(.red)
-                                    if !edits.exact { Text("+ uncounted edits").foregroundStyle(.secondary) }
-                                } else { Text("Edit counts unavailable").foregroundStyle(.secondary) }
+
+                                }
                             }.font(.system(size: 9, weight: .medium)).monospacedDigit()
-                                .help("Sum of recorded chat edit operations in this worktree; not a net Git diff.")
+                                .help("Net Git diff from the comparison branch’s merge base, including readable untracked text files.")
                         }
                     }
                     Spacer(minLength: 6)

@@ -55,6 +55,7 @@ public struct AgentSession: Identifiable, Codable, Sendable, Equatable {
     public var upstreamBehind: Int? = nil
     public var deliveryStatus: DeliveryStatus? = nil
     public var edits: ChatEdits? = nil
+    public var workspaceDiff: ChatEdits? = nil
     public var isDone: Bool {
         hasUnreadResult == true && isSubagent != true && remote?.stale != true && (state == .idle || state == .inactive)
     }
@@ -89,6 +90,7 @@ public struct GitFacts: Codable, Sendable {
     public var untracked = 0
     public var ignored: [String] = []
     public var ignoredCount = 0
+    public var workspaceDiff: ChatEdits? = nil
     public var merged: Bool?
     public var unpushed: Int?
     public var base: String?

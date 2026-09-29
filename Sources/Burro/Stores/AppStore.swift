@@ -192,6 +192,7 @@ import BurroCore
                 session.deliveryStatus = DeliveryStatus.evaluate(tree.facts)
                 session.checkoutPath = tree.path; session.checkoutBranch = tree.branch
                 session.upstreamBehind = tree.facts.upstreamBehind
+                session.workspaceDiff = tree.facts.workspaceDiff
             }
             return session
         }

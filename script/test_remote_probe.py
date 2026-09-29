@@ -57,6 +57,8 @@ class ProbeTests(unittest.TestCase):
             details = probe.delivery_details(path, time.monotonic() + 5)
             self.assertEqual(details['deliveryStatus'], 'Uncommitted changes')
             self.assertEqual(details['checkoutBranch'], 'staging')
+            self.assertEqual(details['workspaceDiff']['added'], 1)
+            self.assertEqual(details['workspaceDiff']['removed'], 0)
             self.assertFalse(details['checkoutIsLinked'])
             linked = path + '-linked'
             try:

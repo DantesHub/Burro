@@ -46,13 +46,13 @@ struct NotchAgentRow: View {
                         .font(.system(size: 10)).lineLimit(1).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 6)
-                if let edits = session.edits, edits.hasEdits {
+                if let edits = session.edits, edits.hasEdits, edits.added + edits.removed > 0 || edits.exact {
                     HStack(spacing: 3) {
                         if edits.added + edits.removed > 0 || edits.exact {
                             Text("+\(edits.added)").foregroundStyle(.green)
                             Text("−\(edits.removed)").foregroundStyle(.red)
                             if !edits.exact { Text("+").foregroundStyle(.secondary) }
-                        } else { Text("± unavailable").foregroundStyle(.secondary) }
+                        }
                     }.font(.system(size: 10, weight: .semibold)).monospacedDigit()
                         .help("Recorded edits in this chat, summed across edit operations; not the shared checkout diff. A trailing + means some changes have no recorded diff.")
                 }

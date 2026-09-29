@@ -33,6 +33,8 @@ final class GitIntegrationTests: XCTestCase {
         XCTAssertEqual(DeliveryStatus.evaluate(facts), .merged)
         try "local data".write(toFile: tree + "/draft.txt", atomically: true, encoding: .utf8)
         facts = reader.facts(record, base: "origin/main"); XCTAssertEqual(facts.untracked, 1)
+        XCTAssertEqual(facts.workspaceDiff?.added, 1)
+        XCTAssertEqual(facts.workspaceDiff?.removed, 0)
         XCTAssertEqual(DeliveryStatus.evaluate(facts), .uncommitted)
         _ = try git(tree, ["add", "draft.txt"])
         facts = reader.facts(record, base: "origin/main"); XCTAssertEqual(facts.changed, 1)
