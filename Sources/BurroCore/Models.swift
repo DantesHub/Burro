@@ -140,6 +140,8 @@ public struct ScanConfiguration: Sendable {
     public var discover: Bool
     public var protectedPaths: Set<String>
     public var baseOverrides: [String: String]
+    public var onlyWorktree: String? = nil
+    public var inspectionDeadline: Date? = nil
     public var refreshReferences: Bool
     public init(home: String = FileManager.default.homeDirectoryForCurrentUser.path,
                 repositories: [String] = [], discover: Bool = true,

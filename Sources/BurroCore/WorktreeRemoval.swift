@@ -18,14 +18,15 @@ public enum WorktreeRemoval {
         guard !tree.isPrimary, !tree.protectedByUser, assessment(tree).level == .candidate else {
             return "This worktree cannot be removed: " + assessment(tree).reasons.joined(separator: "; ")
         }
-        let runner = CommandRunner()
+        let deadline = Date().addingTimeInterval(15)
+        let runner = CommandRunner(deadline: deadline)
         let listed = runner.git(tree.repositoryPath, ["worktree", "list", "--porcelain", "-z"])
         let records = GitParser.worktrees(listed.output)
         guard listed.succeeded, let record = records.first(where: { $0.path == tree.path }),
               records.first?.path != tree.path, !record.locked, !record.prunable, record.head == tree.head else {
             return "Worktree registration changed. Refresh and review it again."
         }
-        let facts = GitReader().facts(record, base: tree.facts.base)
+        let facts = GitReader(deadline: deadline).facts(record, base: tree.facts.base, includeDiff: false)
         guard facts.errors.isEmpty, facts.merged == true, facts.unpushed == 0,
               facts.changed == 0, facts.untracked == 0, !facts.operationInProgress else {
             return "Worktree changed or contains local data. Nothing was deleted; inspect it in Burro."

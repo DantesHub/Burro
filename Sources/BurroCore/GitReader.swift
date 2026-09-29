@@ -37,8 +37,8 @@ public enum GitParser {
     }
 }
 public struct GitReader: Sendable {
-    let runner = CommandRunner()
-    public init() {}
+    let runner: CommandRunner
+    public init(deadline: Date? = nil) { runner = CommandRunner(deadline: deadline) }
     public func comparisonBase(_ path: String, override: String?) -> String? {
         if let override, !override.isEmpty {
             return runner.git(path, ["rev-parse", "--verify", "--end-of-options", override + "^{commit}"]).succeeded ? override : nil
@@ -47,7 +47,7 @@ public struct GitReader: Sendable {
         let choices = (symbolic.succeeded ? [symbolic.output.trimmingCharacters(in: .whitespacesAndNewlines)] : []) + ["origin/main", "origin/master", "origin/staging"]
         return choices.first { runner.git(path, ["rev-parse", "--verify", "--end-of-options", $0 + "^{commit}"]).succeeded }
     }
-    public func facts(_ record: WorktreeRecord, base: String?) -> GitFacts {
+    public func facts(_ record: WorktreeRecord, base: String?, includeDiff: Bool = true) -> GitFacts {
         var facts = GitFacts(); facts.base = base
         facts.branch = record.branch == "Detached HEAD" ? nil : record.branch
         guard FileManager.default.fileExists(atPath: record.path) else { facts.errors.append("Folder cannot be inspected"); return facts }
@@ -64,7 +64,7 @@ public struct GitReader: Sendable {
             facts.ignored = Array(entries.prefix(12)); facts.ignoredCount = entries.count
         } else { facts.errors.append("Ignored files could not be checked") }
         if let base {
-            let diff = runner.git(record.path, ["diff", "--numstat", "--no-renames", "--merge-base", base, "--"])
+            let diff = includeDiff ? runner.git(record.path, ["diff", "--numstat", "--no-renames", "--merge-base", base, "--"]) : CommandResult(code: -1, output: "", error: "", timedOut: false)
             if diff.succeeded {
                 var added = 0, removed = 0
                 for line in diff.output.split(separator: "\n") {

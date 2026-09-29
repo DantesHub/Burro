@@ -7,6 +7,9 @@ import BurroCore
 @MainActor @Observable final class AppStore {
     var snapshot = ScanSnapshot.empty
     var scanning = false
+    var deletingWorktreeID: String?
+    var deletionPhase = "Checking…"
+    private var removedWorktreePaths: Set<String> = []
     var didScan = false
     var agentActivity = AgentActivitySnapshot.empty
     var remoteHosts: [RemoteHost] { didSet { save(); rebuildAgentActivity() } }
@@ -222,26 +225,33 @@ import BurroCore
                     agents: tree.agents, processes: tree.processes, protected: protected, coverageWarnings: result.warnings)
             }
         }
+        result.worktrees.removeAll { removedWorktreePaths.contains($0.path) }
         snapshot = result; scanning = false; didScan = true
         rebuildAgentActivity()
         if selection == nil || !result.worktrees.contains(where: { $0.id == selection }) { selection = visibleWorktrees.first?.id }
     }
     func deleteMergedWorktree(_ item: NotchCleanup) async -> String? {
-        guard item.id.hasPrefix("local:"), !scanning else {
-            return "Wait for the current scan to finish. Remote removal is not supported yet."
-        }
-        scanning = true
-        defer { scanning = false }
-        let config = ScanConfiguration(repositories: repositories, discover: discover, protectedPaths: protectedPaths, baseOverrides: baseOverrides, refreshReferences: true)
-        let fresh = await Task.detached(priority: .userInitiated) { await Scanner().scan(config) }.value
-        snapshot = fresh
+        guard item.id.hasPrefix("local:") else { return "Remote removal is not supported yet." }
+        guard deletingWorktreeID == nil else { return "Another worktree deletion is already in progress." }
+        guard let existing = snapshot.worktrees.first(where: { $0.path == item.path }) else { return "This worktree is no longer registered." }
+        deletingWorktreeID = item.id; deletionPhase = "Checking…"
+        defer { deletingWorktreeID = nil }
+        var config = ScanConfiguration(repositories: [existing.repositoryPath], discover: false,
+            protectedPaths: protectedPaths, baseOverrides: baseOverrides)
+        config.onlyWorktree = item.path
+        config.inspectionDeadline = Date().addingTimeInterval(20)
+        let fresh = await Task.detached(priority: .userInitiated) { [config] in await Scanner().scan(config) }.value
         guard var tree = fresh.worktrees.first(where: { $0.path == item.path }) else {
-            rebuildAgentActivity()
-            return "This worktree is no longer registered."
+            return "Could not finish checking this worktree. Please retry."
         }
         tree.protectedByUser = protectedPaths.contains(tree.path)
+        if let index = snapshot.worktrees.firstIndex(where: { $0.path == item.path }) { snapshot.worktrees[index] = tree }
+        deletionPhase = "Deleting…"
         let error = await Task.detached(priority: .userInitiated) { [tree] in WorktreeRemoval.remove(tree) }.value
-        if error == nil { snapshot.worktrees.removeAll { $0.path == item.path } }
+        if error == nil {
+            removedWorktreePaths.insert(item.path)
+            snapshot.worktrees.removeAll { $0.path == item.path }
+        }
         rebuildAgentActivity()
         return error
     }

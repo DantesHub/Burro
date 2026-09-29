@@ -2,7 +2,7 @@ import XCTest
 @testable import BurroCore
 
 final class WorktreeRemovalTests: XCTestCase {
-    func testRemovalRechecksLocalDataAndKeepsBranch() throws {
+    func testRemovalRechecksLocalDataAndKeepsBranch() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -21,6 +21,14 @@ final class WorktreeRemovalTests: XCTestCase {
         _ = try git(["worktree", "add", "-b", "feature", linked])
         let records = GitParser.worktrees(runner.git(repo, ["worktree", "list", "--porcelain", "-z"]).output)
         let record = try XCTUnwrap(records.first { $0.branch == "feature" })
+        var config = ScanConfiguration(home: root.path, repositories: [repo], discover: false)
+        config.onlyWorktree = record.path
+        config.inspectionDeadline = Date().addingTimeInterval(10)
+        let targeted = await Scanner().scan(config)
+        XCTAssertEqual(targeted.worktrees.map(\.path), [record.path])
+        XCTAssertNil(targeted.worktrees.first?.facts.workspaceDiff)
+        let expired = CommandRunner(deadline: Date().addingTimeInterval(-1)).git(repo, ["status"])
+        XCTAssertTrue(expired.timedOut)
         let facts = GitReader().facts(record, base: "origin/main")
         let tree = Worktree(path: record.path, repository: "repo", repositoryPath: repo, branch: "feature", head: record.head,
             isPrimary: false, isLocked: false, isMissing: false, isPrunable: false, facts: facts, agents: [], processes: [],

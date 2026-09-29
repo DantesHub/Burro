@@ -19,7 +19,6 @@ struct NotchView: View {
     @State private var hoveredWorkspace: String?
     @State private var showingHealth = false
     @State private var pendingDeletion: NotchCleanup?
-    @State private var deletingID: String?
     @State private var deletionError: String?
 
     private var activity: AgentActivitySnapshot { store.agentActivity }
@@ -68,10 +67,9 @@ struct NotchView: View {
         .alert("Delete merged worktree?", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), presenting: pendingDeletion) { item in
             Button("Cancel", role: .cancel) { pendingDeletion = nil }
             Button("Delete", role: .destructive) {
-                pendingDeletion = nil; deletingID = item.id
+                pendingDeletion = nil
                 Task {
                     deletionError = await store.deleteMergedWorktree(item)
-                    deletingID = nil
                     reconcile(force: true)
                 }
             }
@@ -313,13 +311,13 @@ struct NotchView: View {
         Button(role: .destructive) {
             pendingDeletion = item
         } label: {
-            Text(deletingID == item.id ? "Checking…" : "Delete")
+            Text(store.deletingWorktreeID == item.id ? store.deletionPhase : "Delete")
                 .font(.system(size: 11, weight: .semibold)).foregroundStyle(.red)
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(.red.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.red.opacity(0.45)))
         }.buttonStyle(.plain)
-            .disabled(deletingID != nil || !item.id.hasPrefix("local:"))
+            .disabled(store.deletingWorktreeID != nil || !item.id.hasPrefix("local:"))
             .help("Delete this merged worktree; keep its branch")
         }
     }
