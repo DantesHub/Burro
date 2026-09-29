@@ -276,7 +276,12 @@ struct NotchView: View {
                         if cleanup.contains(where: { $0.id == workspace.id }) {
                             Label("Merged", systemImage: "trash").foregroundStyle(.blue)
                         } else {
-                            Text(workspace.status.rawValue).foregroundStyle(workspace.status.color)
+                            VStack(alignment: .trailing, spacing: 3) {
+                                Text(workspace.status.rawValue).foregroundStyle(workspace.status.color)
+                                if [.running, .waiting, .scheduled].contains(workspace.status), let delivery = workspace.gitDelivery {
+                                    Text(delivery.rawValue).font(.system(size: 9)).foregroundStyle(WorkspaceStatus(delivery).color)
+                                }
+                            }
                         }
                     }.fixedSize(horizontal: true, vertical: false)
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")

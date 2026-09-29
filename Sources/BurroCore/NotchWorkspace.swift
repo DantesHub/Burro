@@ -14,6 +14,13 @@ public struct NotchWorkspace: Identifiable, Sendable {
         return ChatEdits(hasEdits: true, added: edits.reduce(0) { $0 + $1.added },
             removed: edits.reduce(0) { $0 + $1.removed }, exact: edits.allSatisfy(\.exact))
     }
+    public var gitDelivery: DeliveryStatus? {
+        let live = groups.flatMap { group in group.members.filter { !group.unavailableIDs.contains($0.id) && $0.remote?.stale != true } }
+        for delivery in [DeliveryStatus.inProgress, .uncommitted, .needsPush, .behind, .needsMerge, .merged, .synced] {
+            if live.contains(where: { $0.deliveryStatus == delivery }) { return delivery }
+        }
+        return nil
+    }
     public var status: WorkspaceStatus {
         let live = groups.flatMap { group in group.members.filter { !group.unavailableIDs.contains($0.id) && $0.remote?.stale != true } }
         guard !live.isEmpty else { return .unavailable }

@@ -72,6 +72,26 @@ class ProbeTests(unittest.TestCase):
             self.assertIsNone(probe.delivery_status(path, time.monotonic() - 1))
         self.assertIsNone(probe.delivery_status(path, time.monotonic() + 5))
 
+    def test_reported_commit_is_verified_without_claiming_chat_ownership(self):
+        with tempfile.TemporaryDirectory() as path:
+            def git(*args):
+                return subprocess.check_output(['git', '-C', path, *args], stderr=subprocess.DEVNULL, text=True).strip()
+            git('init', '-b', 'main')
+            git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'initial')
+            sha = git('rev-parse', 'HEAD')
+            rows = [dict(type='session_meta', payload=dict(cwd=path)),
+                    dict(type='response_item', payload=dict(type='message', role='assistant', phase='final', content=[dict(text='Committed in ' + sha[:9])]))]
+            self.assertEqual(probe.reported_commit(rows), dict(sha=sha, onRemote=False))
+            git('update-ref', 'refs/remotes/origin/main', sha)
+            self.assertEqual(probe.reported_commit(rows), dict(sha=sha, onRemote=True))
+            rows[-1]['payload']['content'][0]['text'] = 'Committed deadbeef12345678'
+            self.assertIsNone(probe.reported_commit(rows))
+            rows[-1]['payload']['content'][0]['text'] = 'Committed ' + sha[:9] + ' compared to abc12345'
+            self.assertIsNone(probe.reported_commit(rows))
+            rows[-1]['payload']['content'][0]['text'] = 'Committed ' + sha[:9]
+            rows.append(dict(type='event_msg', payload=dict(type='task_started')))
+            self.assertIsNone(probe.reported_commit(rows))
+
     def test_chat_edit_counts_ignore_conversation_and_failed_edits(self):
         with tempfile.NamedTemporaryFile(mode='w+', suffix='.jsonl') as log:
             def check(rows):

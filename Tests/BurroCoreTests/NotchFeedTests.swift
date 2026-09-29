@@ -8,6 +8,22 @@ final class NotchFeedTests: XCTestCase {
         AgentSession(id: id, provider: .codex, title: id, cwd: "/same/repo", state: state,
             updatedAt: Date(timeIntervalSince1970: 100), evidence: "fixture", isSubagent: child, parentSessionID: parent)
     }
+    func testFinishedChatDoesNotInheritSharedCheckoutDirt() {
+        var first = agent("finished", .idle), second = agent("other", .working)
+        first.turnCompleted = true
+        first.deliveryStatus = .uncommitted
+        first.edits = ChatEdits(hasEdits: true, added: 1, removed: 0, exact: true)
+        first.edits?.commit = ChatCommit(sha: "abc1234", onRemote: true)
+        second.deliveryStatus = .uncommitted
+        XCTAssertEqual(first.statusLabel, "Finished")
+        XCTAssertEqual(first.chatDeliveryLabel, "Reported commit on remote")
+        let workspaces = NotchWorkspace.grouped(NotchFeed(sessions: [first, second], includeIdle: false).groups) { $0.cwd }
+        XCTAssertEqual(workspaces[0].status, .running)
+        second.state = .idle; second.turnCompleted = true
+        let completed = NotchWorkspace.grouped(NotchFeed(sessions: [first, second], includeIdle: false).groups) { $0.cwd }
+        XCTAssertEqual(completed[0].status, .uncommitted)
+        XCTAssertEqual(second.chatDeliveryLabel, "Delivery unverified")
+    }
     func testCodeOnlyFeedHidesConversationsWithoutChangingSafetyInventory() {
         var edited = agent("edited")
         edited.edits = ChatEdits(hasEdits: true, added: 12, removed: 3, exact: true)
@@ -75,7 +91,7 @@ final class NotchFeedTests: XCTestCase {
         session.deliveryStatus = .needsMerge
         XCTAssertFalse(session.isDone)
         XCTAssertTrue(session.showsCompletion)
-        XCTAssertEqual(session.statusLabel, "Needs to merge")
+        XCTAssertEqual(session.statusLabel, "Finished")
         XCTAssertEqual(NotchFeed(sessions: [session], includeIdle: false).groups.count, 1)
         let activity = AgentActivitySnapshot(sessions: [session], warnings: [], sampledAt: Date())
         XCTAssertEqual(activity.needsMergeCount, 1)
@@ -86,9 +102,9 @@ final class NotchFeedTests: XCTestCase {
         XCTAssertFalse(session.showsCompletion)
         session.state = .idle
         session.deliveryStatus = .merged
-        XCTAssertFalse(session.showsCompletion)
+        XCTAssertTrue(session.showsCompletion)
         session.hasUnreadResult = true
-        XCTAssertEqual(session.statusLabel, "Merged")
+        XCTAssertEqual(session.statusLabel, "Finished")
         session.isSubagent = true
         XCTAssertFalse(session.showsCompletion)
     }

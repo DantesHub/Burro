@@ -56,12 +56,18 @@ struct NotchAgentRow: View {
                     }.font(.system(size: 10, weight: .semibold)).monospacedDigit()
                         .help("Recorded edits in this chat, summed across edit operations; not the shared checkout diff. A trailing + means some changes have no recorded diff.")
                 }
+                VStack(alignment: .trailing, spacing: 3) {
                 HStack(spacing: 4) {
-                    if session.showsCompletion && available && workerLabel == nil { Image(systemName: session.deliveryStatus?.needsAction == true ? "arrow.triangle.branch" : "checkmark.circle.fill").font(.system(size: 9)) }
+                    if session.showsCompletion && available && workerLabel == nil { Image(systemName: "checkmark.circle.fill").font(.system(size: 9)) }
                     else if session.state == .scheduled && available && session.remote?.stale != true && workerLabel == nil { Image(systemName: "clock").font(.system(size: 10)) }
                     else { Circle().fill(color).frame(width: 4, height: 4) }
                     Text(label)
                 }.font(.system(size: 10, weight: .medium)).foregroundStyle(color)
+                if session.showsCompletion && available && workerLabel == nil {
+                    Text(session.chatDeliveryLabel).font(.system(size: 9)).foregroundStyle(.secondary)
+                        .help(session.edits?.commit.map { "The chat cited \($0.sha). Verified against this checkout and cached remote refs; this does not attribute every edit to this chat." } ?? "No specific chat commit has been verified. Worktree Git status is shown only on the worktree row.")
+                }
+                }
             }.padding(.horizontal, 10).frame(height: 56)
                 .background(hovering ? .white.opacity(0.065) : .clear, in: RoundedRectangle(cornerRadius: 11))
                 .contentShape(Rectangle())
@@ -72,15 +78,11 @@ struct NotchAgentRow: View {
     }
 }
 
-// Delivery evidence only changes completed-result presentation, never live agent state.
+// Chat activity never inherits the shared checkout’s Git warning color.
 extension AgentSession {
     var statusColor: Color {
         guard showsCompletion else { return state.color }
-        switch deliveryStatus {
-        case .uncommitted, .needsPush, .needsMerge, .behind, .inProgress: return .yellow
-        case .merged: return .purple
-        case .synced, nil: return .blue
-        }
+        return .blue
     }
 }
 

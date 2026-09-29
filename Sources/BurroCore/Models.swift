@@ -59,12 +59,16 @@ public struct AgentSession: Identifiable, Codable, Sendable, Equatable {
     public var isDone: Bool {
         hasUnreadResult == true && isSubagent != true && remote?.stale != true && (state == .idle || state == .inactive)
     }
-    // Reading a chat clears unread, but must not dismiss pending repository work.
+    // Chat completion is provider activity evidence, independent of shared checkout dirt.
     public var showsCompletion: Bool {
-        isDone || (turnCompleted == true && deliveryStatus?.needsAction == true && isSubagent != true
+        isDone || (turnCompleted == true && isSubagent != true
             && remote?.stale != true && state == .idle)
     }
-    public var statusLabel: String { showsCompletion ? (deliveryStatus?.rawValue ?? "Done") : state.rawValue }
+    public var statusLabel: String { showsCompletion ? "Finished" : state.rawValue }
+    public var chatDeliveryLabel: String {
+        guard let commit = edits?.commit else { return "Delivery unverified" }
+        return commit.onRemote ? "Reported commit on remote" : "Reported commit verified"
+    }
 }
 public struct LocalProcess: Codable, Sendable {
     public var pid: Int

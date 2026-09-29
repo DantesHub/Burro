@@ -4,7 +4,13 @@ public struct ChatEdits: Codable, Sendable, Equatable {
     public var hasEdits: Bool
     public var added: Int
     public var removed: Int
+    public var commit: ChatCommit? = nil
     public var exact: Bool
+}
+
+public struct ChatCommit: Codable, Sendable, Equatable {
+    public var sha: String
+    public var onRemote: Bool
 }
 
 /// Cache derived counts by log modification time; transcript contents never leave this host.
@@ -17,7 +23,7 @@ final class ChatEditReader: @unchecked Sendable {
         var stamps: [String: String] = [:]
         for path in Set(paths) where !path.isEmpty {
             let attributes = try? FileManager.default.attributesOfItem(atPath: path)
-            stamps[path] = "\(attributes?[.size] ?? 0):\(attributes?[.modificationDate] ?? Date.distantPast)"
+            stamps[path] = "\(attributes?[.size] ?? 0):\(attributes?[.modificationDate] ?? Date.distantPast):\(Int(Date().timeIntervalSince1970 / 60))"
         }
         let changed = stamps.keys.filter { cache[$0]?.0 != stamps[$0] }
         if !changed.isEmpty, let input = try? JSONEncoder().encode(changed) {

@@ -19,6 +19,59 @@ TAIL_LIMIT = 512 * 1024
 
 
 
+def reported_commit(objects, deadline=None):
+    """Verify only an explicitly cited commit, never infer ownership of all checkout changes."""
+    cwd = None
+    latest = ''
+    for obj in objects:
+        p = obj.get('payload', {})
+        cwd = obj.get('cwd') or p.get('cwd') or cwd
+        item = p.get('item', {})
+        if p.get('type') in ('task_started', 'turn_started'):
+            latest = ''
+        message = None
+        if p.get('type') == 'message' and p.get('role') == 'assistant' and p.get('phase') != 'commentary':
+            message = p
+        elif item.get('type') == 'AgentMessage' and item.get('phase') != 'commentary':
+            message = item
+        elif obj.get('type') == 'assistant':
+            message = obj.get('message', {})
+        if message is not None:
+            content = message.get('content', [])
+            if isinstance(content, str):
+                latest = content
+            else:
+                latest = '\n'.join(part.get('text', '') for part in content if isinstance(part, dict))
+    if not cwd or not re.search(r'\b(commit(?:ted)?|pushed|merged)\b', latest, re.I):
+        return None
+    hashes = list(dict.fromkeys(re.findall(r'(?<![a-zA-Z0-9])[a-fA-F0-9]{7,40}(?![a-zA-Z0-9])', latest)))
+    # Multiple references may mean comparisons or a multi-commit delivery. Do not pick one arbitrarily.
+    if len(hashes) != 1:
+        return None
+    deadline = min(deadline or float('inf'), time.monotonic() + 0.6)
+    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+    env.update(GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0')
+    def git(*args):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError()
+        return subprocess.run(['git', '--no-optional-locks', '-C', cwd, *args], env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=remaining)
+    try:
+        resolved = git('rev-parse', '--verify', '--end-of-options', hashes[0] + '^{commit}')
+        if resolved.returncode != 0:
+            return None
+        sha = resolved.stdout.strip()
+        if git('merge-base', '--is-ancestor', sha, 'HEAD').returncode != 0:
+            return None
+        refs = git('for-each-ref', '--format=%(refname)', '--contains=' + sha, 'refs/remotes/')
+        if refs.returncode != 0:
+            return None
+        return dict(sha=sha, onRemote=bool(refs.stdout.strip()))
+    except (OSError, ValueError, subprocess.TimeoutExpired, TimeoutError):
+        return None
+
+
 def chat_edit_stats(path, deadline=None):
     """Count recorded successful edit operations, never shared working-tree diffs."""
     added = removed = 0
@@ -104,7 +157,7 @@ def chat_edit_stats(path, deadline=None):
                         added += 1
                     elif line.startswith('-') and not line.startswith('---'):
                         removed += 1
-        return dict(hasEdits=edited, added=added, removed=removed, exact=exact)
+        return dict(hasEdits=edited, added=added, removed=removed, exact=exact, commit=reported_commit(objects, deadline))
     except (OSError, TypeError, ValueError):
         return dict(hasEdits=False, added=0, removed=0, exact=False)
 
