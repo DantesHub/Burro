@@ -165,7 +165,10 @@ struct NotchView: View {
                 Spacer(minLength: 0)
                 Menu {
                     Toggle("Include idle chats", isOn: $presentation.includeIdle)
-                    Button("Refresh status") { Task { await store.refreshAgents(); await store.refreshRemotes() } }
+                    Button("Refresh status") { Task {
+                        await GitReferenceRefresh.shared.invalidate()
+                        await store.refresh(); await store.refreshAgents(); await store.refreshRemotes()
+                    } }
                     Button("Monitoring details") { showingHealth = true }
                 } label: { Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold)) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()

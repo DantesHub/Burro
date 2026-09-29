@@ -209,7 +209,7 @@ import BurroCore
     func refresh() async {
         guard !scanning else { return }
         scanning = true
-        let config = ScanConfiguration(repositories: repositories, discover: discover, protectedPaths: protectedPaths, baseOverrides: baseOverrides)
+        let config = ScanConfiguration(repositories: repositories, discover: discover, protectedPaths: protectedPaths, baseOverrides: baseOverrides, refreshReferences: true)
         var result = await Task.detached(priority: .utility) { await Scanner().scan(config) }.value
         for i in result.worktrees.indices {
             let tree = result.worktrees[i]
@@ -231,7 +231,7 @@ import BurroCore
         }
         scanning = true
         defer { scanning = false }
-        let config = ScanConfiguration(repositories: repositories, discover: discover, protectedPaths: protectedPaths, baseOverrides: baseOverrides)
+        let config = ScanConfiguration(repositories: repositories, discover: discover, protectedPaths: protectedPaths, baseOverrides: baseOverrides, refreshReferences: true)
         let fresh = await Task.detached(priority: .userInitiated) { await Scanner().scan(config) }.value
         snapshot = fresh
         guard var tree = fresh.worktrees.first(where: { $0.path == item.path }) else {

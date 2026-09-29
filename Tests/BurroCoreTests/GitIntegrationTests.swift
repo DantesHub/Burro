@@ -52,6 +52,39 @@ final class GitIntegrationTests: XCTestCase {
         XCTAssertFalse(facts.errors.isEmpty); XCTAssertNil(facts.merged)
         XCTAssertNil(DeliveryStatus.evaluate(facts))
     }
+    func testRefRefreshRecognizesMergeIntoStagingWithoutChangingCheckout() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let remote = root.appendingPathComponent("remote").path, local = root.appendingPathComponent("local").path
+        let runner = CommandRunner()
+        func git(_ path: String, _ args: [String]) throws -> String {
+            let result = runner.git(path, args)
+            guard result.succeeded else { throw NSError(domain: "git", code: 1, userInfo: [NSLocalizedDescriptionKey: result.error]) }
+            return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        _ = try git(root.path, ["init", "-b", "staging", remote])
+        _ = try git(remote, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "initial"])
+        _ = try git(root.path, ["clone", remote, local])
+        _ = try git(local, ["checkout", "-b", "feature"])
+        _ = try git(local, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "feature"])
+        _ = try git(local, ["push", "-u", "origin", "feature"])
+        let head = try git(local, ["rev-parse", "HEAD"])
+        let record = WorktreeRecord(path: local, head: head, branch: "feature")
+        XCTAssertEqual(DeliveryStatus.evaluate(GitReader().facts(record, base: "origin/staging")), .needsMerge)
+        _ = try git(remote, ["merge", "--ff-only", "feature"])
+        let refresh = GitReferenceRefresh()
+        let error = await refresh.refresh(local, identity: local)
+        XCTAssertNil(error)
+        XCTAssertEqual(DeliveryStatus.evaluate(GitReader().facts(record, base: "origin/staging")), .merged)
+        XCTAssertEqual(try git(local, ["rev-parse", "HEAD"]), head)
+        XCTAssertEqual(try git(local, ["branch", "--show-current"]), "feature")
+        _ = try git(local, ["remote", "set-url", "origin", root.appendingPathComponent("missing").path])
+        let cached = await refresh.refresh(local, identity: local)
+        XCTAssertNil(cached)
+        let failed = await refresh.refresh(local, identity: local, now: Date().addingTimeInterval(301))
+        XCTAssertNotNil(failed)
+    }
     func testSharedStagingUsesUpstreamAndPreservesBehindEvidence() {
         var facts = GitFacts()
         facts.branch = "staging"; facts.upstream = "origin/staging"; facts.base = "origin/main"

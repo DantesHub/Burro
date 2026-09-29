@@ -137,11 +137,12 @@ public struct ScanConfiguration: Sendable {
     public var discover: Bool
     public var protectedPaths: Set<String>
     public var baseOverrides: [String: String]
+    public var refreshReferences: Bool
     public init(home: String = FileManager.default.homeDirectoryForCurrentUser.path,
                 repositories: [String] = [], discover: Bool = true,
-                protectedPaths: Set<String> = [], baseOverrides: [String: String] = [:]) {
+                protectedPaths: Set<String> = [], baseOverrides: [String: String] = [:], refreshReferences: Bool = false) {
         self.home = home; self.repositories = repositories; self.discover = discover
-        self.protectedPaths = protectedPaths; self.baseOverrides = baseOverrides
+        self.protectedPaths = protectedPaths; self.baseOverrides = baseOverrides; self.refreshReferences = refreshReferences
     }
 }
 public enum Paths {
