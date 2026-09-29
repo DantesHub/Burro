@@ -107,8 +107,9 @@ struct NotchView: View {
     private var compactStatus: some View {
         HStack(spacing: 0) {
             statusCount(summary.workingCount > 0 ? summary.workingCount : summary.scheduledCount,
-                symbol: summary.workingCount == 0 && summary.scheduledCount > 0 ? "clock" : "waveform.path",
-                color: summary.workingCount > 0 ? AgentState.working.color : (summary.scheduledCount > 0 ? AgentState.scheduled.color : .gray))
+                symbol: summary.workingCount == 0 && summary.scheduledCount > 0 ? "clock" : "wrench",
+                color: summary.workingCount > 0 ? AgentState.working.color : (summary.scheduledCount > 0 ? AgentState.scheduled.color : .gray),
+                pulsing: summary.workingCount > 0)
                 .frame(maxWidth: .infinity)
             Color.clear.frame(width: presentation.compactGeometry.hardwareGap)
             HStack(spacing: 8) {
@@ -119,9 +120,10 @@ struct NotchView: View {
             }.frame(maxWidth: .infinity)
         }.padding(.horizontal, 8)
     }
-    private func statusCount(_ number: Int, symbol: String, color: Color) -> some View {
+    private func statusCount(_ number: Int, symbol: String, color: Color, pulsing: Bool = false) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: symbol).font(.system(size: 8, weight: .medium))
+            if pulsing { RunningPulse() }
+            else { Image(systemName: symbol).font(.system(size: 8, weight: .medium)) }
             Text(store.didCheckAgents ? "\(number)" : "–").font(.system(size: 10, weight: .medium)).monospacedDigit()
         }.foregroundStyle(color).fixedSize()
     }
