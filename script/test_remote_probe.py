@@ -21,6 +21,29 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_delivery_git_evidence(self):
+        with tempfile.TemporaryDirectory() as path:
+            def git(*args):
+                subprocess.run(['git', '-C', path, *args], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            git('init', '-b', 'main')
+            git('config', 'user.name', 'Test')
+            git('config', 'user.email', 'test@example.invalid')
+            git('-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'initial')
+            check = lambda: probe.delivery_status(path, time.monotonic() + 5)
+            self.assertEqual(check(), 'Needs to merge')
+            git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+            self.assertEqual(check(), 'Merged')
+            Path(path, 'draft').write_text('change')
+            self.assertEqual(check(), 'Needs to merge')
+            git('add', 'draft')
+            git('-c', 'commit.gpgsign=false', 'commit', '-m', 'feature')
+            git('update-ref', 'refs/remotes/origin/feature', 'HEAD')
+            self.assertEqual(check(), 'Needs to merge')
+            git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+            self.assertEqual(check(), 'Merged')
+            self.assertIsNone(probe.delivery_status(path, time.monotonic() - 1))
+        self.assertIsNone(probe.delivery_status(path, time.monotonic() + 5))
+
     def worker_event(self, sid, agent='worker-a', age=0, stop='tool_use', started=None):
         from datetime import datetime, timezone
         stamp = time.time() - age if started is None else started

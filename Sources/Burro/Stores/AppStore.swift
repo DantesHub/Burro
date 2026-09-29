@@ -107,10 +107,21 @@ import BurroCore
         localActivity = result; checkingAgents = false; didCheckAgents = true
         rebuildAgentActivity()
     }
-    func workspaceLabel(for session: AgentSession) -> String {
-        if let remote = session.remote { return "\(remote.hostName) · \(URL(fileURLWithPath: session.cwd).lastPathComponent)" }
+    func workspacePath(for session: AgentSession) -> String {
+        if session.remote == nil { return worktree(for: session)?.path ?? session.cwd }
+        // Remote paths must never be resolved against this Mac's filesystem.
+        return (session.cwd as NSString).standardizingPath
+    }
+    func workspaceTitle(for session: AgentSession) -> String {
         if let tree = worktree(for: session) { return tree.branch }
-        return URL(fileURLWithPath: session.cwd).lastPathComponent
+        return URL(fileURLWithPath: workspacePath(for: session)).lastPathComponent
+    }
+    func workspaceLabel(for session: AgentSession) -> String {
+        let path = workspacePath(for: session)
+        let folder = URL(fileURLWithPath: path).lastPathComponent
+        let host = session.remote?.hostName ?? "This Mac"
+        if let tree = worktree(for: session) { return "\(host) · \(folder) · \(tree.branch)" }
+        return "\(host) · \(folder)"
     }
     func selectAgent(_ session: AgentSession) {
         search = ""
@@ -171,12 +182,16 @@ import BurroCore
         rebuildAgentActivity()
     }
     private func rebuildAgentActivity() {
-        var sessions = localActivity.sessions
+        var sessions = localActivity.sessions.map { source in
+            var session = source
+            if let tree = worktree(for: session) { session.deliveryStatus = DeliveryStatus.evaluate(tree.facts) }
+            return session
+        }
         var warnings = localActivity.warnings
         for host in remoteHosts where host.enabled {
             guard var result = remoteSnapshots[host.id] else { continue }
             result.host = host
-            result.sessions = result.sessions.filter { $0.state != .inactive || localActivity.readState.applying(to: $0).isDone }
+            result.sessions = result.sessions.filter { $0.state != .inactive || localActivity.readState.applying(to: $0).showsCompletion }
             sessions += result.displaySessions().map { localActivity.readState.applying(to: $0) }
             if result.state == .offline { warnings.append("\(host.name): connection unavailable") }
             warnings += result.warnings.map { "\(host.name): \($0)" }
@@ -199,6 +214,7 @@ import BurroCore
             }
         }
         snapshot = result; scanning = false; didScan = true
+        rebuildAgentActivity()
         if selection == nil || !result.worktrees.contains(where: { $0.id == selection }) { selection = visibleWorktrees.first?.id }
     }
     func protect(_ tree: Worktree) {

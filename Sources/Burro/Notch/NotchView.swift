@@ -15,10 +15,18 @@ struct NotchView: View {
     var compact = false
     @State private var list = NotchListState()
     @State private var expandedGroups: Set<String> = []
+    @State private var expandedWorkspaces: Set<String> = []
+    @State private var hoveredWorkspace: String?
     @State private var showingHealth = false
     private var activity: AgentActivitySnapshot { store.agentActivity }
+    private var workspaces: [NotchWorkspace] {
+        NotchWorkspace.grouped(list.groups) { store.workspacePath(for: $0) }
+    }
     private var rowCount: Int {
-        list.groups.reduce(0) { $0 + 1 + (expandedGroups.contains($1.id) ? $1.workers.count : 0) }
+        workspaces.reduce(0) { total, workspace in
+            total + 1 + (expandedWorkspaces.contains(workspace.id)
+                ? workspace.groups.reduce(0) { $0 + 1 + (expandedGroups.contains($1.id) ? $1.workers.count : 0) } : 0)
+        }
     }
 
     var body: some View {
@@ -69,7 +77,7 @@ struct NotchView: View {
                 .frame(maxWidth: .infinity)
             Color.clear.frame(width: presentation.compactGeometry.hardwareGap)
             statusCount(activity.attentionCount, symbol: "tray.fill",
-                color: activity.waitingCount > 0 ? NotchStyle.attention : (activity.doneCount > 0 ? .blue : .gray))
+                color: activity.waitingCount > 0 ? NotchStyle.attention : (activity.needsMergeCount > 0 ? .yellow : (activity.mergedCount > 0 ? .purple : (activity.doneCount > 0 ? .blue : .gray))))
                 .frame(maxWidth: .infinity)
         }.padding(.horizontal, 8)
     }
@@ -99,8 +107,11 @@ struct NotchView: View {
     private var expandedBody: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
+                Text("\(workspaces.count) worktrees").foregroundStyle(.secondary)
                 if activity.waitingCount > 0 { count(activity.waitingCount, "need you", NotchStyle.attention) }
-                if activity.doneCount > 0 { count(activity.doneCount, "done", .blue) }
+                if activity.needsMergeCount > 0 { count(activity.needsMergeCount, "needs merge", .yellow) }
+                if activity.mergedCount > 0 { count(activity.mergedCount, "merged", .purple) }
+                if activity.unknownDeliveryCount > 0 { count(activity.unknownDeliveryCount, "done", .blue) }
                 count(activity.workingCount, "running", AgentState.working.color)
                 if activity.scheduledCount > 0 { count(activity.scheduledCount, "scheduled", AgentState.scheduled.color) }
                 Spacer(minLength: 0)
@@ -119,15 +130,10 @@ struct NotchView: View {
             else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(list.groups) { group in
-                            groupRow(group)
-                            if expandedGroups.contains(group.id) {
-                                ForEach(group.workers) { worker in
-                                    NotchAgentRow(session: worker, workspace: store.workspaceLabel(for: worker),
-                                        available: !group.unavailableIDs.contains(worker.id),
-                                        select: { onSelect(worker) }, inspect: { onInspect(worker) })
-                                        .padding(.leading, 18)
-                                }
+                        ForEach(workspaces) { workspace in
+                            workspaceRow(workspace)
+                            if expandedWorkspaces.contains(workspace.id) {
+                                workspaceChats(workspace).padding(.leading, 14)
                             }
                         }
                     }.padding(.horizontal, 12).padding(.vertical, 4)
@@ -135,6 +141,63 @@ struct NotchView: View {
             }
             footer
         }.frame(maxHeight: .infinity)
+    }
+    @ViewBuilder private func workspaceChats(_ workspace: NotchWorkspace) -> some View {
+        ForEach(workspace.groups) { group in
+            groupRow(group)
+            if expandedGroups.contains(group.id) {
+                ForEach(group.workers) { worker in
+                    NotchAgentRow(session: worker, workspace: store.workspaceLabel(for: worker),
+                        available: !group.unavailableIDs.contains(worker.id),
+                        select: { onSelect(worker) }, inspect: { onInspect(worker) })
+                        .padding(.leading, 18)
+                }
+            }
+        }
+    }
+    @ViewBuilder private func workspaceRow(_ workspace: NotchWorkspace) -> some View {
+        if let session = workspace.sessions.first {
+            let expanded = expandedWorkspaces.contains(workspace.id)
+            let running = workspace.sessions.filter { $0.state == .working }.count
+            let waiting = workspace.sessions.filter { $0.state == .waiting }.count
+            let pending = workspace.sessions.contains { $0.showsCompletion && $0.deliveryStatus == .needsMerge }
+            let merged = workspace.sessions.contains { $0.showsCompletion && $0.deliveryStatus == .merged }
+            Button {
+                hoveredWorkspace = nil
+                if expanded { expandedWorkspaces.remove(workspace.id) }
+                else { expandedWorkspaces.insert(workspace.id) }
+            } label: {
+                HStack(spacing: 11) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .frame(width: 30, height: 30).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(store.workspaceTitle(for: session)).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        Text("\(session.remote?.hostName ?? "This Mac") · \(URL(fileURLWithPath: store.workspacePath(for: session)).lastPathComponent) · \(workspace.groups.count) \(workspace.groups.count == 1 ? "chat" : "chats")")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
+                    if waiting > 0 { Text("\(waiting) need you").foregroundStyle(NotchStyle.attention) }
+                    else if running > 0 { Text("\(running) running").foregroundStyle(AgentState.working.color) }
+                    else if pending { Text("Needs to merge").foregroundStyle(.yellow) }
+                    else if merged { Text("Merged").foregroundStyle(.purple) }
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(.secondary)
+                }.font(.system(size: 10, weight: .medium))
+                    .padding(.horizontal, 10).frame(height: 56).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+                .help(store.workspacePath(for: session) + "\nClick to expand chats; hover to preview")
+                .onHover { inside in
+                    if inside && !expanded { hoveredWorkspace = workspace.id }
+                }
+                .popover(isPresented: Binding(get: { hoveredWorkspace == workspace.id },
+                    set: { if !$0 { hoveredWorkspace = nil } }), arrowEdge: .trailing) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(store.workspaceTitle(for: session)).font(.headline)
+                        Text(store.workspacePath(for: session)).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                        ScrollView { VStack(spacing: 0) { workspaceChats(workspace) } }
+                            .frame(height: min(CGFloat(workspace.groups.count) * 56, 392))
+                    }.padding(12).frame(width: 480).preferredColorScheme(.dark)
+                }
+        }
     }
     @ViewBuilder private func groupRow(_ group: NotchGroup) -> some View {
         if let session = group.root {

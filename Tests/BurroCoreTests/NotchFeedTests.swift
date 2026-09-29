@@ -8,6 +8,40 @@ final class NotchFeedTests: XCTestCase {
         AgentSession(id: id, provider: .codex, title: id, cwd: "/same/repo", state: state,
             updatedAt: Date(timeIntervalSince1970: 100), evidence: "fixture", isSubagent: child, parentSessionID: parent)
     }
+    func testWorkspacesGroupByCheckoutAndMachineNotBranchOrTitle() {
+        var first = agent("one"), second = agent("two"), other = agent("other"), remote = agent("remote")
+        first.cwd = "/repo/a"; second.cwd = "/repo/a"; other.cwd = "/repo/b"; remote.cwd = "/repo/a"
+        remote.remote = RemoteOrigin(hostID: UUID(), hostName: "Other Mac", sampledAt: Date(), stale: false)
+        let feed = NotchFeed(sessions: [first, second, other, remote], includeIdle: false)
+        let workspaces = NotchWorkspace.grouped(feed.groups) { $0.cwd }
+        XCTAssertEqual(workspaces.count, 3)
+        XCTAssertEqual(workspaces.first { $0.sessions.contains { $0.id == "one" } }?.sessions.count, 2)
+        XCTAssertEqual(workspaces.first { $0.sessions.contains { $0.id == "remote" } }?.sessions.count, 1)
+    }
+    func testReadCompletedWorkRemainsVisibleUntilMerged() {
+        var session = agent("read-completion", .idle)
+        session.turnCompleted = true
+        session.hasUnreadResult = false
+        session.deliveryStatus = .needsMerge
+        XCTAssertFalse(session.isDone)
+        XCTAssertTrue(session.showsCompletion)
+        XCTAssertEqual(session.statusLabel, "Needs to merge")
+        XCTAssertEqual(NotchFeed(sessions: [session], includeIdle: false).groups.count, 1)
+        let activity = AgentActivitySnapshot(sessions: [session], warnings: [], sampledAt: Date())
+        XCTAssertEqual(activity.needsMergeCount, 1)
+        XCTAssertEqual(activity.visibleSessions(includeIdle: false).count, 1)
+        session.state = .inactive
+        XCTAssertFalse(session.showsCompletion)
+        session.state = .working
+        XCTAssertFalse(session.showsCompletion)
+        session.state = .idle
+        session.deliveryStatus = .merged
+        XCTAssertFalse(session.showsCompletion)
+        session.hasUnreadResult = true
+        XCTAssertEqual(session.statusLabel, "Merged")
+        session.isSubagent = true
+        XCTAssertFalse(session.showsCompletion)
+    }
     func testNeedsInputThenUnreadThenRunningAndDeduplicatedCounts() {
         var done = agent("done", .idle); done.hasUnreadResult = true
         let sessions = [agent("running"), done, agent("waiting", .waiting), agent("running"), agent("idle", .idle)]

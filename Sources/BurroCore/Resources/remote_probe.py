@@ -19,6 +19,48 @@ TAIL_LIMIT = 512 * 1024
 
 
 
+def delivery_status(path, deadline):
+    """Read cached Git refs only; unknown evidence never becomes Merged."""
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    environment.update(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0", LC_ALL="C")
+    def git(*args):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError()
+        return subprocess.run(["git", "--no-optional-locks", "-C", path, *args],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              timeout=min(remaining, 1), text=True, env=environment)
+    try:
+        status = git("status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=none")
+        if status.returncode != 0:
+            return None
+        if status.stdout.strip():
+            return "Needs to merge"
+        directory = git("rev-parse", "--absolute-git-dir")
+        if directory.returncode != 0:
+            return None
+        if any((Path(directory.stdout.strip()) / name).exists() for name in
+               ("index.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "BISECT_LOG")):
+            return "Needs to merge"
+        unpushed = git("rev-list", "--count", "HEAD", "--not", "--remotes")
+        if unpushed.returncode == 0 and int(unpushed.stdout.strip()) > 0:
+            return "Needs to merge"
+        symbolic = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+        choices = ([symbolic.stdout.strip()] if symbolic.returncode == 0 else []) + ["origin/main", "origin/master", "origin/staging"]
+        for base in choices:
+            if git("rev-parse", "--verify", "--end-of-options", base + "^{commit}").returncode != 0:
+                continue
+            merged = git("merge-base", "--is-ancestor", "HEAD", base)
+            if merged.returncode == 1:
+                return "Needs to merge"
+            if merged.returncode == 0 and unpushed.returncode == 0 and int(unpushed.stdout.strip()) == 0:
+                return "Merged"
+            return None
+    except (OSError, ValueError, subprocess.TimeoutExpired, TimeoutError):
+        pass
+    return None
+
+
 def held_lock(path):
     try:
         with open(path, "rb") as handle:
@@ -512,6 +554,16 @@ def collect(home):
             warnings.append("Claude session metadata could not be read on this host.")
     elif (home / ".claude").exists():
         warnings.append("Claude session registry is unavailable on this host.")
+    # Share results across chats in one checkout, with a two-second total budget.
+    delivery_deadline = min(deadline, time.monotonic() + 2)
+    deliveries = {}
+    for item in sessions:
+        if item.get("turnCompleted") and item["state"] in ("Open · idle", "Inactive"):
+            path = item["cwd"]
+            if path not in deliveries:
+                deliveries[path] = delivery_status(path, delivery_deadline)
+            if deliveries[path] is not None:
+                item["deliveryStatus"] = deliveries[path]
     sessions.sort(key=lambda item: item["state"] == "Inactive")
     if len(sessions) > LIMIT:
         warnings.append("Remote sessions exceed the inspection limit.")

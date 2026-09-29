@@ -88,3 +88,13 @@ A safe candidate is advisory, never a deletion guarantee. The scan is a point-in
 - Session titles and filesystem paths remain in memory/UI. Burro persists selected roots, comparison refs, discovery preference, manual protections, notch preferences, and explicit remote host configurations in `local.burro.worktrees` UserDefaults. On first launch after the Grove rename, it imports only the four original preference keys from `local.grove.worktrees` once, without overwriting existing Burro values. CLI JSON contains titles/paths and should be treated as local data. No telemetry is sent. Configured remote hosts receive only the fixed inspection script over SSH.
 
 See [architecture](../MODULE.md) for implementation boundaries.
+
+### Completed chat delivery badges
+
+Completed unread chats show yellow **Needs to merge** when their checkout has tracked/untracked changes, an unfinished Git operation, unpushed commits, or HEAD is not contained in the comparison branch. Purple **Merged** requires a clean checkout, no unpushed commits, and HEAD contained in that branch. Missing Git evidence retains blue **Done**. Running/input/scheduled states retain priority, and completed chats that remain open with pending merge work stay visible even after being read; inactive historical chats are not revived merely because they share a dirty checkout. Merged or unverified completions retain the existing unread visibility rules.
+
+These badges describe the checkout shared by the chat, not individually attributed chat changes or GitHub PR status. Local checks use the worktree scan and configured comparison branch; remote checks use origin/HEAD, origin/main, origin/master, then origin/staging. Checks read cached remote refs without fetching. Fetch in your repository to refresh evidence after a remote merge. Squash/rebase merges may remain Needs to merge because ancestry cannot prove inclusion. Local evidence refreshes on the worktree scan (about 30 seconds); remote checks share a bounded two-second Git budget.
+
+### Worktree groups in the notch
+
+The notch groups its visible chats by machine and checkout path. Each row shows the branch (when locally known), machine, folder name, and chat count. Hover to preview the group's chats, or click to expand it inline. The full checkout path appears in the preview and tooltip. Different hosts and different paths remain separate even when their branch names match. Local nested directories resolve to the discovered worktree; remote groups currently use the reported working directory. Provider icons are bundled from the official OpenAI Developers and Claude websites; see `Sources/Burro/Resources/PROVIDER_ICONS.md`.

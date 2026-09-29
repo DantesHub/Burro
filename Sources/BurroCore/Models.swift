@@ -7,6 +7,14 @@ public enum AgentState: String, Codable, Sendable {
     case recent = "Recent activity", inactive = "Inactive", unknown = "Unknown"
     public var keepsWorktree: Bool { self != .inactive }
 }
+public enum DeliveryStatus: String, Codable, Sendable {
+    case needsMerge = "Needs to merge", merged = "Merged"
+    public static func evaluate(_ facts: GitFacts) -> Self? {
+        if facts.changed > 0 || facts.untracked > 0 || facts.operationInProgress || (facts.unpushed ?? 0) > 0 || facts.merged == false { return .needsMerge }
+        guard facts.errors.isEmpty, facts.merged == true, facts.unpushed == 0 else { return nil }
+        return .merged
+    }
+}
 public struct AgentSession: Identifiable, Codable, Sendable, Equatable {
     public var id: String
     public var provider: AgentProvider
@@ -25,10 +33,16 @@ public struct AgentSession: Identifiable, Codable, Sendable, Equatable {
     public var hasUnreadResult: Bool? = nil
     public var isSubagent: Bool? = nil
     public var parentSessionID: String? = nil
+    public var deliveryStatus: DeliveryStatus? = nil
     public var isDone: Bool {
         hasUnreadResult == true && isSubagent != true && remote?.stale != true && (state == .idle || state == .inactive)
     }
-    public var statusLabel: String { isDone ? "Done" : state.rawValue }
+    // Reading a chat clears unread, but must not dismiss pending repository work.
+    public var showsCompletion: Bool {
+        isDone || (turnCompleted == true && deliveryStatus == .needsMerge && isSubagent != true
+            && remote?.stale != true && state == .idle)
+    }
+    public var statusLabel: String { showsCompletion ? (deliveryStatus?.rawValue ?? "Done") : state.rawValue }
 }
 public struct LocalProcess: Codable, Sendable {
     public var pid: Int

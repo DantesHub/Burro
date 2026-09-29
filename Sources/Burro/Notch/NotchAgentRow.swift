@@ -13,18 +13,18 @@ struct NotchAgentRow: View {
     private var workerLabel: String? {
         guard available else { return nil }
         if workerState == .waiting { return "Worker needs you" }
-        if workerState == .working && !session.isDone && ![AgentState.working, .waiting].contains(session.state) { return "Worker running" }
+        if workerState == .working && !session.showsCompletion && ![AgentState.working, .waiting].contains(session.state) { return "Worker running" }
         return nil
     }
     private var color: Color {
         if workerLabel != nil { return workerState == .waiting ? NotchStyle.attention : AgentState.working.color }
-        return !available || session.remote?.stale == true ? .secondary : (session.isDone ? .blue : session.state.color)
+        return !available || session.remote?.stale == true ? .secondary : session.statusColor
     }
     private var label: String {
         if !available { return "Unavailable" }
         if let workerLabel { return workerLabel }
         if session.remote?.stale == true { return "Last seen" }
-        if session.isDone { return "Done" }
+        if session.showsCompletion { return session.statusLabel }
         switch session.state {
         case .working: return "Running"
         case .waiting: return "Needs you"
@@ -35,10 +35,11 @@ struct NotchAgentRow: View {
     var body: some View {
         Button(action: select) {
             HStack(spacing: 11) {
-                Image(systemName: session.provider == .codex ? "terminal" : "sparkle")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(session.provider == .codex ? NotchStyle.accent : NotchStyle.claude)
-                    .frame(width: 30, height: 30).background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 9))
+                Image(nsImage: ProviderIcons.image(for: session.provider))
+                    .resizable().interpolation(.high).scaledToFit()
+                    .frame(width: 26, height: 26)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .frame(width: 30, height: 30)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(session.title).font(.system(size: 12, weight: .medium)).lineLimit(1).foregroundStyle(.white.opacity(0.92))
                     Text("\(session.provider == .codex ? "Codex" : "Claude") · \(workspace)")
@@ -46,7 +47,7 @@ struct NotchAgentRow: View {
                 }
                 Spacer(minLength: 6)
                 HStack(spacing: 4) {
-                    if session.isDone && available && workerLabel == nil { Image(systemName: "checkmark.circle.fill").font(.system(size: 9)) }
+                    if session.showsCompletion && available && workerLabel == nil { Image(systemName: session.deliveryStatus == .needsMerge ? "arrow.triangle.branch" : "checkmark.circle.fill").font(.system(size: 9)) }
                     else if session.state == .scheduled && available && session.remote?.stale != true && workerLabel == nil { Image(systemName: "clock").font(.system(size: 10)) }
                     else { Circle().fill(color).frame(width: 4, height: 4) }
                     Text(label)
@@ -59,4 +60,27 @@ struct NotchAgentRow: View {
             .accessibilityHint(session.chatURL == nil ? "Shows session details in Burro" : "Opens this chat in \(session.provider == .codex ? "Codex" : "Claude")")
             .contextMenu { Button("Show in Burro", action: inspect).disabled(!available) }
     }
+}
+
+// Delivery evidence only changes completed-result presentation, never live agent state.
+extension AgentSession {
+    var statusColor: Color {
+        guard showsCompletion else { return state.color }
+        switch deliveryStatus {
+        case .needsMerge: return .yellow
+        case .merged: return .purple
+        case nil: return .blue
+        }
+    }
+}
+
+@MainActor private enum ProviderIcons {
+    static let codex = load("codex")
+    static let claude = load("claude")
+    static func load(_ name: String) -> NSImage {
+        guard let url = Bundle.module.url(forResource: name, withExtension: "png"),
+              let image = NSImage(contentsOf: url) else { return NSImage() }
+        return image
+    }
+    static func image(for provider: AgentProvider) -> NSImage { provider == .codex ? codex : claude }
 }

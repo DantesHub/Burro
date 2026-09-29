@@ -13,7 +13,7 @@ public struct NotchGroup: Identifiable, Sendable {
     public static func priority(_ session: AgentSession) -> Int {
         if session.remote?.stale == true { return 3 }
         if session.state == .waiting { return 0 }
-        if session.isDone { return 1 }
+        if session.showsCompletion { return 1 }
         switch session.state {
         case .working: return 2
         case .unknown: return 3
@@ -32,7 +32,7 @@ public struct NotchFeed: Sendable {
         for session in sessions where inventory[session.id] == nil { inventory[session.id] = session }
         self.inventory = inventory
         func visible(_ session: AgentSession) -> Bool {
-            session.isDone || (session.state != .inactive && (includeIdle || session.state != .idle))
+            session.showsCompletion || (session.state != .inactive && (includeIdle || session.state != .idle))
         }
         // Follow only explicit, same-provider/same-host links. Never infer ownership from cwd/title.
         func root(for worker: AgentSession) -> AgentSession? {
