@@ -177,11 +177,16 @@ struct NotchView: View {
                         .frame(width: 30, height: 30).foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(store.workspaceTitle(for: session)).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                        Text("\(session.remote?.hostName ?? "This Mac") · \(URL(fileURLWithPath: store.workspacePath(for: session)).lastPathComponent) · \(workspace.groups.count) \(workspace.groups.count == 1 ? "chat" : "chats")\(behind > 0 ? " · Behind by \(behind)" : "")")
+                        Text("\(session.remote?.hostName ?? "This Mac") · \(URL(fileURLWithPath: store.workspacePath(for: session)).lastPathComponent)\(behind > 0 ? " · Behind by \(behind)" : "")")
                             .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 6)
-                    Text(workspace.status.rawValue).foregroundStyle(workspace.status.color)
+                    HStack(spacing: 8) {
+                        Text("\(workspace.groups.count) \(workspace.groups.count == 1 ? "chat" : "chats")")
+                            .font(.system(size: 11, weight: .bold)).monospacedDigit()
+                            .foregroundStyle(.white.opacity(0.9))
+                        Text(workspace.status.rawValue).foregroundStyle(workspace.status.color)
+                    }.fixedSize(horizontal: true, vertical: false)
                     Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(.secondary)
                 }.font(.system(size: 10, weight: .medium))
                     .padding(.horizontal, 10).frame(height: 56).contentShape(Rectangle())
