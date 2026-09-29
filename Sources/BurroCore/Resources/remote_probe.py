@@ -59,6 +59,8 @@ def delivery_details(path, deadline):
                 result["upstreamBehind"] = behind
         status = git("status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=none")
         directory = value("rev-parse", "--absolute-git-dir")
+        if directory and common:
+            result["checkoutIsLinked"] = Path(directory).resolve() != common and not (Path(directory) / "locked").exists()
         if directory and any((Path(directory) / name).exists() for name in
                ("index.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "BISECT_LOG")):
             return finish("Git operation")

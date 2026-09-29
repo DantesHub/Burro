@@ -50,6 +50,7 @@ public struct AgentSession: Identifiable, Codable, Sendable, Equatable {
     public var parentSessionID: String? = nil
     public var repositoryPath: String? = nil
     public var checkoutPath: String? = nil
+    public var checkoutIsLinked: Bool? = nil
     public var checkoutBranch: String? = nil
     public var upstreamBehind: Int? = nil
     public var deliveryStatus: DeliveryStatus? = nil

@@ -26,11 +26,19 @@ struct NotchView: View {
         NotchProject.grouped(workspaces) { store.projectPath(for: $0) }
     }
     private var summary: WorkspaceSummary {
-        WorkspaceSummary(NotchWorkspace.grouped(NotchFeed(sessions: activity.sessions,
-            includeIdle: presentation.includeIdle).groups) { store.workspacePath(for: $0) })
+        let cleanupIDs = Set(cleanup.map(\.id))
+        return WorkspaceSummary(NotchWorkspace.grouped(NotchFeed(sessions: activity.sessions,
+            includeIdle: presentation.includeIdle).groups) { store.workspacePath(for: $0) }.filter { !cleanupIDs.contains($0.id) })
+    }
+    private var cleanup: [NotchCleanup] {
+        NotchCleanup.inventory(worktrees: store.snapshot.worktrees, sessions: activity.sessions)
+    }
+    private var unlistedCleanup: [NotchCleanup] {
+        let visible = Set(workspaces.map(\.id))
+        return cleanup.filter { !visible.contains($0.id) }
     }
     private var rowCount: Int {
-        projects.count + workspaces.reduce(0) { total, workspace in
+        unlistedCleanup.count + projects.count + workspaces.reduce(0) { total, workspace in
             total + 1 + (expandedWorkspaces.contains(workspace.id)
                 ? workspace.groups.reduce(0) { $0 + 1 + (expandedGroups.contains($1.id) ? $1.workers.count : 0) } : 0)
         }
@@ -42,7 +50,7 @@ struct NotchView: View {
                 compactStatus.frame(height: presentation.compactGeometry.headerHeight)
                     .contentShape(Rectangle()).onTapGesture(perform: onToggle)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Burro: \(summary.workingCount) running, \(summary.scheduledCount) scheduled, \(summary.waitingCount) need input, \(summary.doneCount) completed worktrees")
+                    .accessibilityLabel("Burro: \(summary.workingCount) running, \(summary.scheduledCount) scheduled, \(summary.waitingCount) need input, \(summary.doneCount) completed worktrees, \(cleanup.count) need deletion")
                     .accessibilityAddTraits(.isButton).accessibilityAction { onToggle() }
             } else {
                 VStack(spacing: 0) {
@@ -83,9 +91,12 @@ struct NotchView: View {
                 color: summary.workingCount > 0 ? AgentState.working.color : (summary.scheduledCount > 0 ? AgentState.scheduled.color : .gray))
                 .frame(maxWidth: .infinity)
             Color.clear.frame(width: presentation.compactGeometry.hardwareGap)
+            HStack(spacing: 8) {
             statusCount(summary.attentionCount, symbol: "tray.fill",
                 color: summary.waitingCount > 0 ? NotchStyle.attention : (summary.pendingCount > 0 ? .yellow : (summary.mergedCount > 0 ? .purple : (summary.doneCount > 0 ? .blue : .gray))))
-                .frame(maxWidth: .infinity)
+            statusCount(cleanup.count, symbol: "trash", color: .blue)
+                .help("Merged worktrees that still exist: \(cleanup.count)")
+            }.frame(maxWidth: .infinity)
         }.padding(.horizontal, 8)
     }
     private func statusCount(_ number: Int, symbol: String, color: Color) -> some View {
@@ -113,8 +124,8 @@ struct NotchView: View {
     }
     private var expandedBody: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text("\(summary.workspaces.count) worktrees").foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text("\(summary.workspaces.count + cleanup.count) worktrees").foregroundStyle(.secondary)
                 if summary.waitingCount > 0 { count(summary.waitingCount, "need you", NotchStyle.attention) }
                 if summary.count(.uncommitted) > 0 { count(summary.count(.uncommitted), "uncommitted", .yellow) }
                 if summary.count(.needsPush) > 0 { count(summary.count(.needsPush), "needs push", .yellow) }
@@ -124,6 +135,10 @@ struct NotchView: View {
                 if summary.mergedCount > 0 { count(summary.mergedCount, "merged", .purple) }
                 if summary.unknownDeliveryCount > 0 { count(summary.unknownDeliveryCount, "done", .blue) }
                 count(summary.workingCount, "running", AgentState.working.color)
+                HStack(spacing: 3) {
+                    Image(systemName: "trash").foregroundStyle(.blue)
+                    count(cleanup.count, "need deletion", .blue)
+                }.fixedSize()
                 if summary.scheduledCount > 0 { count(summary.scheduledCount, "scheduled", AgentState.scheduled.color) }
                 Spacer(minLength: 0)
                 Menu {
@@ -137,10 +152,22 @@ struct NotchView: View {
             Rectangle().fill(.white.opacity(0.07)).frame(height: 1).padding(.horizontal, 22)
             if showingHealth { NotchHealthView(store: store) }
             else if !store.didCheckAgents { loading }
-            else if list.groups.isEmpty { empty }
+            else if list.groups.isEmpty && cleanup.isEmpty { empty }
             else {
                 ScrollView {
                     LazyVStack(spacing: 14) {
+                        if !unlistedCleanup.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label("Merged · Needs deletion", systemImage: "trash").foregroundStyle(.blue).font(.headline)
+                                ForEach(unlistedCleanup) { tree in
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(tree.title).font(.system(size: 12, weight: .medium))
+                                        Text("\(tree.machine) · \(tree.path)").font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                    }
+                                }
+                            }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                                .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                        }
                         ForEach(projects) { project in
                             VStack(spacing: 0) {
                                 HStack(spacing: 8) {
@@ -163,7 +190,7 @@ struct NotchView: View {
                                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.09), lineWidth: 1))
                         }
                     }.padding(.horizontal, 12).padding(.vertical, 10)
-                }.scrollIndicators(.automatic)
+                }.scrollIndicators(.hidden)
             }
             footer
         }.frame(maxHeight: .infinity)
@@ -203,7 +230,12 @@ struct NotchView: View {
                         Text("\(workspace.groups.count) \(workspace.groups.count == 1 ? "chat" : "chats")")
                             .font(.system(size: 11, weight: .bold)).monospacedDigit()
                             .foregroundStyle(.white.opacity(0.9))
-                        Text(workspace.status.rawValue).foregroundStyle(workspace.status.color)
+                        if workspace.status == .running { RunningPulse() }
+                        if cleanup.contains(where: { $0.id == workspace.id }) {
+                            Label("Needs deletion", systemImage: "trash").foregroundStyle(.blue)
+                        } else {
+                            Text(workspace.status.rawValue).foregroundStyle(workspace.status.color)
+                        }
                     }.fixedSize(horizontal: true, vertical: false)
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .foregroundStyle(.secondary).frame(width: 24, height: 40)
@@ -362,5 +394,18 @@ extension WorkspaceStatus {
         case .done: return .blue
         default: return .secondary
         }
+    }
+}
+
+/// Timeline-driven opacity avoids animating list layout or pointer targets.
+private struct RunningPulse: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 20, paused: reduceMotion)) { context in
+            let phase = context.date.timeIntervalSinceReferenceDate * .pi
+            Circle().fill(AgentState.working.color)
+                .opacity(reduceMotion ? 1 : 0.65 + 0.25 * sin(phase))
+                .frame(width: 5, height: 5)
+        }.accessibilityHidden(true)
     }
 }

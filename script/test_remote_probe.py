@@ -57,6 +57,13 @@ class ProbeTests(unittest.TestCase):
             details = probe.delivery_details(path, time.monotonic() + 5)
             self.assertEqual(details['deliveryStatus'], 'Uncommitted changes')
             self.assertEqual(details['checkoutBranch'], 'staging')
+            self.assertFalse(details['checkoutIsLinked'])
+            linked = path + '-linked'
+            try:
+                git('worktree', 'add', '--detach', linked, 'HEAD')
+                self.assertTrue(probe.delivery_details(linked, time.monotonic() + 5)['checkoutIsLinked'])
+            finally:
+                git('worktree', 'remove', '--force', linked)
             self.assertEqual(Path(details['repositoryPath']).resolve(), Path(path).resolve())
             self.assertEqual(details['upstreamBehind'], 1)
             self.assertEqual(Path(details['checkoutPath']).resolve(), Path(path).resolve())
