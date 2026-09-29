@@ -30,6 +30,8 @@ final class WorktreeRemovalTests: XCTestCase {
         XCTAssertNotNil(WorktreeRemoval.remove(tree))
         XCTAssertTrue(FileManager.default.fileExists(atPath: draft.path))
         try FileManager.default.removeItem(at: draft)
+        try Data("ignored-secret\n".utf8).write(to: URL(fileURLWithPath: repo + "/.git/info/exclude"))
+        try Data("fixture only".utf8).write(to: URL(fileURLWithPath: linked + "/ignored-secret"))
         XCTAssertNil(WorktreeRemoval.remove(tree))
         XCTAssertFalse(FileManager.default.fileExists(atPath: linked))
         XCTAssertTrue(runner.git(repo, ["rev-parse", "--verify", "feature"]).succeeded)

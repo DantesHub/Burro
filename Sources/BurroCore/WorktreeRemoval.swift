@@ -1,10 +1,22 @@
 import Foundation
 
 public enum WorktreeRemoval {
+    public static func assessment(_ tree: Worktree) -> Assessment {
+        let baseline = SafetyPolicy.assess(primary: tree.isPrimary, locked: tree.isLocked, missing: tree.isMissing,
+            prunable: tree.isPrunable, branch: tree.branch, facts: tree.facts, agents: tree.agents,
+            processes: tree.processes, protected: tree.protectedByUser, coverageWarnings: [])
+        let coverage = tree.assessment.reasons.filter { !baseline.reasons.contains($0) }
+        var facts = tree.facts
+        facts.ignoredCount = 0 // Explicitly accepted in the Delete confirmation.
+        return SafetyPolicy.assess(primary: tree.isPrimary, locked: tree.isLocked, missing: tree.isMissing,
+            prunable: tree.isPrunable, branch: tree.branch, facts: facts,
+            agents: tree.agents.filter { $0.pinned || ![.idle, .inactive].contains($0.state) },
+            processes: tree.processes, protected: tree.protectedByUser, coverageWarnings: coverage)
+    }
     /// Never force removal or delete the branch. Git performs the final dirty/locked check.
     public static func remove(_ tree: Worktree) -> String? {
-        guard !tree.isPrimary, !tree.protectedByUser, tree.assessment.level == .candidate else {
-            return "This worktree cannot be removed: " + tree.assessment.reasons.joined(separator: "; ")
+        guard !tree.isPrimary, !tree.protectedByUser, assessment(tree).level == .candidate else {
+            return "This worktree cannot be removed: " + assessment(tree).reasons.joined(separator: "; ")
         }
         let runner = CommandRunner()
         let listed = runner.git(tree.repositoryPath, ["worktree", "list", "--porcelain", "-z"])
@@ -15,7 +27,7 @@ public enum WorktreeRemoval {
         }
         let facts = GitReader().facts(record, base: tree.facts.base)
         guard facts.errors.isEmpty, facts.merged == true, facts.unpushed == 0,
-              facts.changed == 0, facts.untracked == 0, facts.ignoredCount == 0, !facts.operationInProgress else {
+              facts.changed == 0, facts.untracked == 0, !facts.operationInProgress else {
             return "Worktree changed or contains local data. Nothing was deleted; inspect it in Burro."
         }
         let result = runner.git(tree.repositoryPath, ["worktree", "remove", "--", tree.path])

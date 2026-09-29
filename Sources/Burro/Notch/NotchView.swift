@@ -76,7 +76,7 @@ struct NotchView: View {
                 }
             }
         } message: { item in
-            Text("Remove \(item.path)? The branch will be kept. Burro checks again for active sessions and local files before deleting.")
+            Text("Remove \(item.path)? The branch will be kept. Ignored files (including .env.local and dependencies) will also be deleted. Idle attached chats do not block removal; running agents and uncommitted changes still do.")
         }
         .alert("Could not delete worktree", isPresented: Binding(get: { deletionError != nil }, set: { if !$0 { deletionError = nil } })) {
             Button("OK") { deletionError = nil }

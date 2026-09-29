@@ -9,9 +9,16 @@ final class NotchCleanupTests: XCTestCase {
             protectedByUser: false, assessment: Assessment(level: .review, reasons: []))
         func count() -> Int { NotchCleanup.inventory(worktrees: [tree], sessions: []).count }
         XCTAssertEqual(count(), 1)
-        XCTAssertFalse(NotchCleanup.inventory(worktrees: [tree], sessions: [])[0].canDelete)
+        XCTAssertTrue(NotchCleanup.inventory(worktrees: [tree], sessions: [])[0].canDelete)
         tree.assessment = Assessment(level: .candidate, reasons: [])
         XCTAssertTrue(NotchCleanup.inventory(worktrees: [tree], sessions: [])[0].canDelete)
+        tree.agents = [AgentSession(id: "idle", provider: .codex, title: "idle", cwd: tree.path, state: .idle, updatedAt: Date(), evidence: "fixture")]
+        tree.facts.ignoredCount = 6
+        tree.assessment = SafetyPolicy.assess(primary: false, locked: false, missing: false, prunable: false, branch: tree.branch, facts: tree.facts, agents: tree.agents, processes: [], protected: false, coverageWarnings: [])
+        XCTAssertEqual(WorktreeRemoval.assessment(tree).level, .candidate)
+        tree.agents[0].state = .working
+        XCTAssertEqual(WorktreeRemoval.assessment(tree).level, .keep)
+        tree.agents = []; tree.facts.ignoredCount = 0
         tree.isPrimary = true; XCTAssertEqual(count(), 0)
         tree.isPrimary = false; tree.isMissing = true; XCTAssertEqual(count(), 0)
         tree.isMissing = false; tree.facts.changed = 1; XCTAssertEqual(count(), 0)

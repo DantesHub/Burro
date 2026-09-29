@@ -17,8 +17,8 @@ public struct NotchCleanup: Identifiable, Sendable {
             guard !tree.isPrimary, !tree.isMissing, !tree.isLocked, !tree.protectedByUser,
                   tree.facts.merged == true, DeliveryStatus.evaluate(tree.facts) == .merged,
                   tree.processes.isEmpty, !active(tree.agents + sessions.filter { $0.remote == nil && ($0.cwd == tree.path || $0.checkoutPath == tree.path || $0.attachedPaths.contains(tree.path)) }), !tree.agents.contains(where: \.pinned) else { return nil }
-            return Self(id: "local:" + tree.path, path: tree.path, title: tree.branch, machine: "This Mac", canDelete: tree.assessment.level == .candidate,
-                blockers: tree.assessment.level == .candidate ? [] : tree.assessment.reasons)
+            return Self(id: "local:" + tree.path, path: tree.path, title: tree.branch, machine: "This Mac", canDelete: WorktreeRemoval.assessment(tree).level == .candidate,
+                blockers: WorktreeRemoval.assessment(tree).level == .candidate ? [] : WorktreeRemoval.assessment(tree).reasons)
         }
         let remote = Dictionary(grouping: sessions.filter { $0.remote != nil && $0.checkoutPath != nil }) {
             $0.remote!.hostID.uuidString + ":" + $0.checkoutPath!
