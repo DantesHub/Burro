@@ -7,6 +7,13 @@ public struct NotchWorkspace: Identifiable, Sendable {
     public var previewGroups: [NotchGroup] { Array(groups.prefix(5)) }
     public var previewOverflow: Int { max(0, groups.count - 5) }
     public var sessions: [AgentSession] { groups.flatMap(\.members) }
+    public var editTotals: ChatEdits? {
+        let unique = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let edits = unique.values.compactMap(\.edits).filter(\.hasEdits)
+        guard !edits.isEmpty else { return nil }
+        return ChatEdits(hasEdits: true, added: edits.reduce(0) { $0 + $1.added },
+            removed: edits.reduce(0) { $0 + $1.removed }, exact: edits.allSatisfy(\.exact))
+    }
     public var status: WorkspaceStatus {
         let live = groups.flatMap { group in group.members.filter { !group.unavailableIDs.contains($0.id) && $0.remote?.stale != true } }
         guard !live.isEmpty else { return .unavailable }

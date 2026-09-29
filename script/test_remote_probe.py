@@ -70,6 +70,31 @@ class ProbeTests(unittest.TestCase):
             self.assertIsNone(probe.delivery_status(path, time.monotonic() - 1))
         self.assertIsNone(probe.delivery_status(path, time.monotonic() + 5))
 
+    def test_chat_edit_counts_ignore_conversation_and_failed_edits(self):
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.jsonl') as log:
+            def check(rows):
+                log.seek(0); log.truncate()
+                for row in rows:
+                    log.write(json.dumps(row) + '\n')
+                log.flush()
+                return probe.chat_edit_stats(log.name)
+            self.assertFalse(check([dict(type='response_item', payload=dict(type='message', content='edit code please'))])['hasEdits'])
+            patch = dict(type='event_msg', payload=dict(type='patch_apply_end', call_id='a', success=True,
+                changes={'file.py': dict(type='update', unified_diff='@@\n-old\n+new\n+extra')}))
+            result = check([patch, patch])
+            self.assertEqual((result['added'], result['removed']), (2, 1))
+            patch['payload']['success'] = False
+            self.assertFalse(check([patch])['hasEdits'])
+            claude = dict(uuid='a', toolUseResult=dict(structuredPatch=[dict(lines=[' context', '-before', '+after'])]))
+            result = check([claude, claude])
+            self.assertEqual((result['added'], result['removed']), (1, 1))
+            shell = dict(payload=dict(type='item_completed', item=dict(type='CommandExecution', status='completed', exit_code=0,
+                command=['python3', '-c', 'p.write_text("new")'])))
+            result = check([shell])
+            self.assertTrue(result['hasEdits']); self.assertFalse(result['exact'])
+            shell['payload']['item']['exit_code'] = 1
+            self.assertFalse(check([shell])['hasEdits'])
+
     def worker_event(self, sid, agent='worker-a', age=0, stop='tool_use', started=None):
         from datetime import datetime, timezone
         stamp = time.time() - age if started is None else started

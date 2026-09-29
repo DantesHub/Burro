@@ -54,6 +54,7 @@ public struct AgentSession: Identifiable, Codable, Sendable, Equatable {
     public var checkoutBranch: String? = nil
     public var upstreamBehind: Int? = nil
     public var deliveryStatus: DeliveryStatus? = nil
+    public var edits: ChatEdits? = nil
     public var isDone: Bool {
         hasUnreadResult == true && isSubagent != true && remote?.stale != true && (state == .idle || state == .inactive)
     }

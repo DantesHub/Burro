@@ -19,6 +19,103 @@ TAIL_LIMIT = 512 * 1024
 
 
 
+def chat_edit_stats(path, deadline=None):
+    """Count recorded successful edit operations, never shared working-tree diffs."""
+    added = removed = 0
+    edited = False
+    exact = True
+    seen = set()
+    try:
+        with open(path, 'rb') as handle:
+            size = os.fstat(handle.fileno()).st_size
+            limit = 16 * 1024 * 1024
+            if size > limit:
+                handle.seek(size - limit)
+                handle.readline()
+                exact = False
+            lines = handle.read(limit).decode('utf-8', errors='replace').splitlines()
+        objects = []
+        for index, line in enumerate(lines):
+            if deadline is not None and index % 100 == 0 and time.monotonic() > deadline:
+                exact = False
+                break
+            try:
+                objects.append(json.loads(line))
+            except (ValueError, TypeError):
+                exact = False
+        has_patch_events = any(o.get('payload', {}).get('type') == 'patch_apply_end' for o in objects)
+        for obj in objects:
+            p = obj.get('payload', {})
+            item = p.get('item', {}) if p.get('type') == 'item_completed' else {}
+            patches = []
+            key = p.get('call_id') if p.get('type') == 'patch_apply_end' else item.get('id') if item.get('type') == 'FileChange' else obj.get('uuid') if isinstance(obj.get('toolUseResult'), dict) else None
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            if p.get('type') == 'patch_apply_end' and p.get('success') is True:
+                key = p.get('call_id')
+                changes = p.get('changes', {})
+                for change in changes.values():
+                    edited = True
+                    if 'unified_diff' in change:
+                        patches.append(change['unified_diff'].splitlines())
+                    elif change.get('type') == 'add':
+                        added += len(change.get('content', '').splitlines())
+                    elif change.get('type') == 'delete' and 'content' in change:
+                        removed += len(change['content'].splitlines())
+                    else:
+                        exact = False
+            elif not has_patch_events and item.get('type') == 'FileChange' and item.get('status') == 'completed':
+                key = item.get('id')
+                changes = item.get('changes', [])
+                if isinstance(changes, dict):
+                    changes = list(changes.values())
+                for change in changes:
+                    edited = True
+                    diff = change.get('diff', change.get('unified_diff'))
+                    if isinstance(diff, str):
+                        patches.append(diff.splitlines())
+                    else:
+                        exact = False
+            elif item.get('type') == 'CommandExecution' and item.get('status') == 'completed' and item.get('exit_code') == 0:
+                command = item.get('command', [])
+                command = '\n'.join(command) if isinstance(command, list) else str(command)
+                if re.search(r'\.write_text\(|\.write_bytes\(|\bopen\([^\n]*,[ ]*[\x27\x22][wax]|\bapply_patch\b|\bsed\s+-i|\bperl\s+-[a-z]*i|\b(?:cat|tee)\s+[^\n]*>|\bgit\s+apply\b', command):
+                    edited = True
+                    exact = False
+            result = obj.get('toolUseResult')
+            if isinstance(result, dict) and not obj.get('message', {}).get('is_error'):
+                if isinstance(result.get('structuredPatch'), list):
+                    edited = True
+                    key = obj.get('uuid')
+                    for hunk in result['structuredPatch']:
+                        patches.append(hunk.get('lines', []))
+                elif result.get('type') == 'create' and isinstance(result.get('content'), str):
+                    edited = True
+                    added += len(result['content'].splitlines())
+                elif 'oldString' in result and 'newString' in result:
+                    import difflib
+                    edited = True
+                    patches.append(list(difflib.unified_diff(result['oldString'].splitlines(), result['newString'].splitlines())))
+            for patch in patches:
+                for line in patch:
+                    if line.startswith('+') and not line.startswith('+++'):
+                        added += 1
+                    elif line.startswith('-') and not line.startswith('---'):
+                        removed += 1
+        return dict(hasEdits=edited, added=added, removed=removed, exact=exact)
+    except (OSError, TypeError, ValueError):
+        return dict(hasEdits=False, added=0, removed=0, exact=False)
+
+
+def claude_edit_path(home, cwd, sid):
+    if not isinstance(sid, str) or '/' in sid or '..' in sid:
+        return ''
+    folder = re.sub(r'[^a-zA-Z0-9]', '-', cwd)
+    return str(home / '.claude/projects' / folder / (sid + '.jsonl'))
+
+
 def delivery_details(path, deadline):
     """Inspect the checkout and its upstream, without fetching or attributing changes to chats."""
     result = {}
@@ -525,6 +622,7 @@ def collect(home):
                         sessions[-1]["turnCompleted"] = completed
                         sessions[-1]["isSubagent"] = is_subagent
                         sessions[-1]["parentSessionID"] = codex_parent_id(source)
+                        sessions[-1]["edits"] = chat_edit_stats(rollout, min(time.monotonic() + 0.15, deadline - 3)) if state != "Inactive" else dict(hasEdits=False, added=0, removed=0, exact=False)
         except (OSError, sqlite3.Error, ValueError, TypeError):
             warnings.append("Codex session metadata could not be read on this host.")
     claude = home / ".claude/sessions"
@@ -570,6 +668,7 @@ def collect(home):
                         sessions.append(session("claude:" + sid, "Claude Code", record.get("name") or "Claude Code session",
                                                 cwd, state, updated, "Remote PID/start-time identity and reported session status.", pid=pid if live else None))
                         sessions[-1]["turnCompleted"] = has_result
+                        sessions[-1]["edits"] = chat_edit_stats(claude_edit_path(home, cwd, sid), min(time.monotonic() + 0.15, deadline - 3))
                         if delegated == "Working" and state == "Working":
                             sessions[-1]["evidence"] = "Verified Claude process with %d active delegated task(s); parent reports idle." % delegated_count
                         elif delegated == "Scheduled" and state == "Scheduled":
@@ -606,4 +705,7 @@ def collect(home):
 if __name__ == "__main__":
     # An explicit home is used by isolated fixture tests; SSH invokes this script without arguments.
     home = Path(sys.argv[2]) if len(sys.argv) == 3 and sys.argv[1] == "--home" else Path.home()
-    print(json.dumps(collect(home), ensure_ascii=True, allow_nan=False))
+    if len(sys.argv) > 1 and sys.argv[1] == '--edit-stats':
+        print(json.dumps({path: chat_edit_stats(path) for path in json.load(sys.stdin)}))
+    else:
+        print(json.dumps(collect(home), ensure_ascii=True, allow_nan=False))

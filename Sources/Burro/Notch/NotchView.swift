@@ -32,7 +32,7 @@ struct NotchView: View {
     private var summary: WorkspaceSummary {
         let cleanupIDs = Set(cleanup.map(\.id))
         return WorkspaceSummary(NotchWorkspace.grouped(NotchFeed(sessions: activity.sessions,
-            includeIdle: presentation.includeIdle).groups) { store.workspacePath(for: $0) }.filter { !cleanupIDs.contains($0.id) })
+            includeIdle: presentation.includeIdle, codeOnly: true).groups) { store.workspacePath(for: $0) }.filter { !cleanupIDs.contains($0.id) })
     }
     private var cleanup: [NotchCleanup] {
         NotchCleanup.inventory(worktrees: store.snapshot.worktrees, sessions: activity.sessions)
@@ -95,7 +95,7 @@ struct NotchView: View {
     }
     private func reconcile(force: Bool = false) {
         guard !compact else { return }
-        list.reconcile(NotchFeed(sessions: activity.sessions, includeIdle: presentation.includeIdle),
+        list.reconcile(NotchFeed(sessions: activity.sessions, includeIdle: presentation.includeIdle, codeOnly: true),
             holding: !force && presentation.expanded && presentation.holdingList)
         updateGeometry()
     }
@@ -254,6 +254,16 @@ struct NotchView: View {
                         Text(store.workspaceTitle(for: session)).font(.system(size: 12, weight: .medium)).lineLimit(1)
                         Text("\(session.remote?.hostName ?? "This Mac") · \(URL(fileURLWithPath: store.workspacePath(for: session)).lastPathComponent)\(behind > 0 ? " · Behind by \(behind)" : "")")
                             .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                        if let edits = workspace.editTotals {
+                            HStack(spacing: 4) {
+                                if edits.added + edits.removed > 0 || edits.exact {
+                                    Text("+\(edits.added)").foregroundStyle(.green)
+                                    Text("−\(edits.removed)").foregroundStyle(.red)
+                                    if !edits.exact { Text("+ uncounted edits").foregroundStyle(.secondary) }
+                                } else { Text("Edit counts unavailable").foregroundStyle(.secondary) }
+                            }.font(.system(size: 9, weight: .medium)).monospacedDigit()
+                                .help("Sum of recorded chat edit operations in this worktree; not a net Git diff.")
+                        }
                     }
                     Spacer(minLength: 6)
                     HStack(spacing: 8) {

@@ -27,12 +27,12 @@ public struct NotchGroup: Identifiable, Sendable {
 public struct NotchFeed: Sendable {
     public var groups: [NotchGroup]
     public var inventory: [String: AgentSession]
-    public init(sessions: [AgentSession], includeIdle: Bool) {
+    public init(sessions: [AgentSession], includeIdle: Bool, codeOnly: Bool = false) {
         var inventory: [String: AgentSession] = [:]
         for session in sessions where inventory[session.id] == nil { inventory[session.id] = session }
         self.inventory = inventory
         func visible(_ session: AgentSession) -> Bool {
-            session.showsCompletion || (session.state != .inactive && (includeIdle || session.state != .idle))
+            (!codeOnly || session.edits?.hasEdits == true) && (session.showsCompletion || (session.state != .inactive && (includeIdle || session.state != .idle)))
         }
         // Follow only explicit, same-provider/same-host links. Never infer ownership from cwd/title.
         func root(for worker: AgentSession) -> AgentSession? {

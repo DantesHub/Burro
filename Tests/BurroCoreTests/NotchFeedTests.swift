@@ -8,6 +8,15 @@ final class NotchFeedTests: XCTestCase {
         AgentSession(id: id, provider: .codex, title: id, cwd: "/same/repo", state: state,
             updatedAt: Date(timeIntervalSince1970: 100), evidence: "fixture", isSubagent: child, parentSessionID: parent)
     }
+    func testCodeOnlyFeedHidesConversationsWithoutChangingSafetyInventory() {
+        var edited = agent("edited")
+        edited.edits = ChatEdits(hasEdits: true, added: 12, removed: 3, exact: true)
+        var conversation = agent("conversation")
+        conversation.edits = ChatEdits(hasEdits: false, added: 0, removed: 0, exact: true)
+        let feed = NotchFeed(sessions: [edited, conversation], includeIdle: true, codeOnly: true)
+        XCTAssertEqual(feed.groups.map(\.id), ["edited"])
+        XCTAssertEqual(feed.inventory.count, 2)
+    }
     func testHoverPreviewCapsAtFiveChatsAndReportsRemainder() {
         for count in [1, 5, 12] {
             let sessions = (0..<count).map { agent("chat-\($0)") }
