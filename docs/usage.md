@@ -91,10 +91,24 @@ See [architecture](../MODULE.md) for implementation boundaries.
 
 ### Completed chat delivery badges
 
-Completed unread chats show yellow **Needs to merge** when their checkout has tracked/untracked changes, an unfinished Git operation, unpushed commits, or HEAD is not contained in the comparison branch. Purple **Merged** requires a clean checkout, no unpushed commits, and HEAD contained in that branch. Missing Git evidence retains blue **Done**. Running/input/scheduled states retain priority, and completed chats that remain open with pending merge work stay visible even after being read; inactive historical chats are not revived merely because they share a dirty checkout. Merged or unverified completions retain the existing unread visibility rules.
+Git delivery labels describe the checkout shared by chats, not edits attributable to each chat:
 
-These badges describe the checkout shared by the chat, not individually attributed chat changes or GitHub PR status. Local checks use the worktree scan and configured comparison branch; remote checks use origin/HEAD, origin/main, origin/master, then origin/staging. Checks read cached remote refs without fetching. Fetch in your repository to refresh evidence after a remote merge. Squash/rebase merges may remain Needs to merge because ancestry cannot prove inclusion. Local evidence refreshes on the worktree scan (about 30 seconds); remote checks share a bounded two-second Git budget.
+- **Uncommitted changes**: tracked or untracked changes are present.
+- **Needs push**: commits are ahead of the configured upstream, or a feature branch has no upstream.
+- **Needs pull**: the checkout is behind its upstream; the subtitle also shows the behind count when other changes take priority.
+- **Needs to merge**: a clean, published feature branch is not contained in its comparison branch.
+- **Merged** (purple): a clean, published feature branch is contained in its comparison branch.
+- **Done** (blue): an integration branch is synchronized with its upstream, or a completed chat lacks sufficient Git evidence for a delivery label.
+- **Git operation**: a merge, rebase, or other Git operation is underway.
+
+Shared integration branches (`main`, `master`, `staging`, `develop`, `development`, or a branch whose upstream is the configured comparison base) are checked against their own upstream, rather than being labeled unmerged into main. Changes take priority over push, pull, and merge status. Checks read cached refs without fetching; fetch in your repository to refresh evidence. Squash/rebase merges may require manual inspection.
+
+Completed, still-open chats with pending delivery work remain visible after being read. Inactive historical chats are not revived merely because they share a dirty checkout. Live states and stale remote evidence retain priority. Local Git evidence refreshes on the worktree scan (about 30 seconds); remote checks share a bounded two-second Git budget.
 
 ### Worktree groups in the notch
 
-The notch groups its visible chats by machine and checkout path. Each row shows the branch (when locally known), machine, folder name, and chat count. Hover to preview the group's chats, or click to expand it inline. The full checkout path appears in the preview and tooltip. Different hosts and different paths remain separate even when their branch names match. Local nested directories resolve to the discovered worktree; remote groups currently use the reported working directory. Provider icons are bundled from the official OpenAI Developers and Claude websites; see `Sources/Burro/Resources/PROVIDER_ICONS.md`.
+The notch groups visible chats by machine and checkout path. Rows show the actual branch when known, machine, folder name, chat count, and upstream behind count. Hover to preview chats, or click to expand. Full checkout paths appear in previews and tooltips. Different hosts and paths remain separate even with matching branch names; discovered local ownership and remotely probed Git roots resolve nested working directories.
+
+Header and compact-notch counts represent worktree groups, not chats. Each group contributes to exactly one status: needs input, running, scheduled, unknown, or its completed Git/done state. A checkout with multiple running chats counts as one running worktree. Chat counts remain in group subtitles. The total describes the visible checkout groups, not the entire Git worktree inventory.
+
+Provider icons are bundled from official OpenAI Developers and Claude websites; see `Sources/Burro/Resources/PROVIDER_ICONS.md`.

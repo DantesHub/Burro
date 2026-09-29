@@ -110,18 +110,18 @@ import BurroCore
     func workspacePath(for session: AgentSession) -> String {
         if session.remote == nil { return worktree(for: session)?.path ?? session.cwd }
         // Remote paths must never be resolved against this Mac's filesystem.
-        return (session.cwd as NSString).standardizingPath
+        return ((session.checkoutPath ?? session.cwd) as NSString).standardizingPath
     }
     func workspaceTitle(for session: AgentSession) -> String {
         if let tree = worktree(for: session) { return tree.branch }
-        return URL(fileURLWithPath: workspacePath(for: session)).lastPathComponent
+        return session.checkoutBranch ?? URL(fileURLWithPath: workspacePath(for: session)).lastPathComponent
     }
     func workspaceLabel(for session: AgentSession) -> String {
         let path = workspacePath(for: session)
         let folder = URL(fileURLWithPath: path).lastPathComponent
         let host = session.remote?.hostName ?? "This Mac"
         if let tree = worktree(for: session) { return "\(host) · \(folder) · \(tree.branch)" }
-        return "\(host) · \(folder)"
+        return "\(host) · \(folder)" + (session.checkoutBranch.map { " · " + $0 } ?? "")
     }
     func selectAgent(_ session: AgentSession) {
         search = ""
@@ -184,7 +184,11 @@ import BurroCore
     private func rebuildAgentActivity() {
         var sessions = localActivity.sessions.map { source in
             var session = source
-            if let tree = worktree(for: session) { session.deliveryStatus = DeliveryStatus.evaluate(tree.facts) }
+            if let tree = worktree(for: session) {
+                session.deliveryStatus = DeliveryStatus.evaluate(tree.facts)
+                session.checkoutPath = tree.path; session.checkoutBranch = tree.branch
+                session.upstreamBehind = tree.facts.upstreamBehind
+            }
             return session
         }
         var warnings = localActivity.warnings

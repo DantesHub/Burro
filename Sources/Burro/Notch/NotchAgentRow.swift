@@ -47,7 +47,7 @@ struct NotchAgentRow: View {
                 }
                 Spacer(minLength: 6)
                 HStack(spacing: 4) {
-                    if session.showsCompletion && available && workerLabel == nil { Image(systemName: session.deliveryStatus == .needsMerge ? "arrow.triangle.branch" : "checkmark.circle.fill").font(.system(size: 9)) }
+                    if session.showsCompletion && available && workerLabel == nil { Image(systemName: session.deliveryStatus?.needsAction == true ? "arrow.triangle.branch" : "checkmark.circle.fill").font(.system(size: 9)) }
                     else if session.state == .scheduled && available && session.remote?.stale != true && workerLabel == nil { Image(systemName: "clock").font(.system(size: 10)) }
                     else { Circle().fill(color).frame(width: 4, height: 4) }
                     Text(label)
@@ -67,9 +67,9 @@ extension AgentSession {
     var statusColor: Color {
         guard showsCompletion else { return state.color }
         switch deliveryStatus {
-        case .needsMerge: return .yellow
+        case .uncommitted, .needsPush, .needsMerge, .behind, .inProgress: return .yellow
         case .merged: return .purple
-        case nil: return .blue
+        case .synced, nil: return .blue
         }
     }
 }

@@ -22,6 +22,10 @@ struct NotchView: View {
     private var workspaces: [NotchWorkspace] {
         NotchWorkspace.grouped(list.groups) { store.workspacePath(for: $0) }
     }
+    private var summary: WorkspaceSummary {
+        WorkspaceSummary(NotchWorkspace.grouped(NotchFeed(sessions: activity.sessions,
+            includeIdle: presentation.includeIdle).groups) { store.workspacePath(for: $0) })
+    }
     private var rowCount: Int {
         workspaces.reduce(0) { total, workspace in
             total + 1 + (expandedWorkspaces.contains(workspace.id)
@@ -35,7 +39,7 @@ struct NotchView: View {
                 compactStatus.frame(height: presentation.compactGeometry.headerHeight)
                     .contentShape(Rectangle()).onTapGesture(perform: onToggle)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Burro: \(activity.workingCount) running, \(activity.scheduledCount) scheduled, \(activity.waitingCount) need input, \(activity.doneCount) done and unread")
+                    .accessibilityLabel("Burro: \(summary.workingCount) running, \(summary.scheduledCount) scheduled, \(summary.waitingCount) need input, \(summary.doneCount) completed worktrees")
                     .accessibilityAddTraits(.isButton).accessibilityAction { onToggle() }
             } else {
                 VStack(spacing: 0) {
@@ -71,13 +75,13 @@ struct NotchView: View {
     }
     private var compactStatus: some View {
         HStack(spacing: 0) {
-            statusCount(activity.workingCount > 0 ? activity.workingCount : activity.scheduledCount,
-                symbol: activity.workingCount == 0 && activity.scheduledCount > 0 ? "clock" : "waveform.path",
-                color: activity.workingCount > 0 ? AgentState.working.color : (activity.scheduledCount > 0 ? AgentState.scheduled.color : .gray))
+            statusCount(summary.workingCount > 0 ? summary.workingCount : summary.scheduledCount,
+                symbol: summary.workingCount == 0 && summary.scheduledCount > 0 ? "clock" : "waveform.path",
+                color: summary.workingCount > 0 ? AgentState.working.color : (summary.scheduledCount > 0 ? AgentState.scheduled.color : .gray))
                 .frame(maxWidth: .infinity)
             Color.clear.frame(width: presentation.compactGeometry.hardwareGap)
-            statusCount(activity.attentionCount, symbol: "tray.fill",
-                color: activity.waitingCount > 0 ? NotchStyle.attention : (activity.needsMergeCount > 0 ? .yellow : (activity.mergedCount > 0 ? .purple : (activity.doneCount > 0 ? .blue : .gray))))
+            statusCount(summary.attentionCount, symbol: "tray.fill",
+                color: summary.waitingCount > 0 ? NotchStyle.attention : (summary.pendingCount > 0 ? .yellow : (summary.mergedCount > 0 ? .purple : (summary.doneCount > 0 ? .blue : .gray))))
                 .frame(maxWidth: .infinity)
         }.padding(.horizontal, 8)
     }
@@ -107,13 +111,17 @@ struct NotchView: View {
     private var expandedBody: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Text("\(workspaces.count) worktrees").foregroundStyle(.secondary)
-                if activity.waitingCount > 0 { count(activity.waitingCount, "need you", NotchStyle.attention) }
-                if activity.needsMergeCount > 0 { count(activity.needsMergeCount, "needs merge", .yellow) }
-                if activity.mergedCount > 0 { count(activity.mergedCount, "merged", .purple) }
-                if activity.unknownDeliveryCount > 0 { count(activity.unknownDeliveryCount, "done", .blue) }
-                count(activity.workingCount, "running", AgentState.working.color)
-                if activity.scheduledCount > 0 { count(activity.scheduledCount, "scheduled", AgentState.scheduled.color) }
+                Text("\(summary.workspaces.count) worktrees").foregroundStyle(.secondary)
+                if summary.waitingCount > 0 { count(summary.waitingCount, "need you", NotchStyle.attention) }
+                if summary.count(.uncommitted) > 0 { count(summary.count(.uncommitted), "uncommitted", .yellow) }
+                if summary.count(.needsPush) > 0 { count(summary.count(.needsPush), "needs push", .yellow) }
+                if summary.count(.behind) > 0 { count(summary.count(.behind), "needs pull", .yellow) }
+                if summary.count(.inProgress) > 0 { count(summary.count(.inProgress), "Git operation", .yellow) }
+                if summary.needsMergeCount > 0 { count(summary.needsMergeCount, "needs merge", .yellow) }
+                if summary.mergedCount > 0 { count(summary.mergedCount, "merged", .purple) }
+                if summary.unknownDeliveryCount > 0 { count(summary.unknownDeliveryCount, "done", .blue) }
+                count(summary.workingCount, "running", AgentState.working.color)
+                if summary.scheduledCount > 0 { count(summary.scheduledCount, "scheduled", AgentState.scheduled.color) }
                 Spacer(minLength: 0)
                 Menu {
                     Toggle("Include idle chats", isOn: $presentation.includeIdle)
@@ -158,10 +166,7 @@ struct NotchView: View {
     @ViewBuilder private func workspaceRow(_ workspace: NotchWorkspace) -> some View {
         if let session = workspace.sessions.first {
             let expanded = expandedWorkspaces.contains(workspace.id)
-            let running = workspace.sessions.filter { $0.state == .working }.count
-            let waiting = workspace.sessions.filter { $0.state == .waiting }.count
-            let pending = workspace.sessions.contains { $0.showsCompletion && $0.deliveryStatus == .needsMerge }
-            let merged = workspace.sessions.contains { $0.showsCompletion && $0.deliveryStatus == .merged }
+            let behind = workspace.sessions.compactMap(\.upstreamBehind).max() ?? 0
             Button {
                 hoveredWorkspace = nil
                 if expanded { expandedWorkspaces.remove(workspace.id) }
@@ -172,14 +177,11 @@ struct NotchView: View {
                         .frame(width: 30, height: 30).foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(store.workspaceTitle(for: session)).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                        Text("\(session.remote?.hostName ?? "This Mac") · \(URL(fileURLWithPath: store.workspacePath(for: session)).lastPathComponent) · \(workspace.groups.count) \(workspace.groups.count == 1 ? "chat" : "chats")")
+                        Text("\(session.remote?.hostName ?? "This Mac") · \(URL(fileURLWithPath: store.workspacePath(for: session)).lastPathComponent) · \(workspace.groups.count) \(workspace.groups.count == 1 ? "chat" : "chats")\(behind > 0 ? " · Behind by \(behind)" : "")")
                             .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 6)
-                    if waiting > 0 { Text("\(waiting) need you").foregroundStyle(NotchStyle.attention) }
-                    else if running > 0 { Text("\(running) running").foregroundStyle(AgentState.working.color) }
-                    else if pending { Text("Needs to merge").foregroundStyle(.yellow) }
-                    else if merged { Text("Merged").foregroundStyle(.purple) }
+                    Text(workspace.status.rawValue).foregroundStyle(workspace.status.color)
                     Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(.secondary)
                 }.font(.system(size: 10, weight: .medium))
                     .padding(.horizontal, 10).frame(height: 56).contentShape(Rectangle())
@@ -309,4 +311,18 @@ enum NotchStyle {
     static let accent = Color(red: 0.78, green: 0.87, blue: 0.66)
     static let attention = Color(red: 0.96, green: 0.70, blue: 0.36)
     static let claude = Color(red: 0.85, green: 0.64, blue: 0.47)
+}
+
+extension WorkspaceStatus {
+    var color: Color {
+        switch self {
+        case .waiting: return NotchStyle.attention
+        case .running: return AgentState.working.color
+        case .scheduled: return AgentState.scheduled.color
+        case .uncommitted, .needsPush, .needsMerge, .behind, .inProgress: return .yellow
+        case .merged: return .purple
+        case .done: return .blue
+        default: return .secondary
+        }
+    }
 }

@@ -19,8 +19,9 @@ TAIL_LIMIT = 512 * 1024
 
 
 
-def delivery_status(path, deadline):
-    """Read cached Git refs only; unknown evidence never becomes Merged."""
+def delivery_details(path, deadline):
+    """Inspect the checkout and its upstream, without fetching or attributing changes to chats."""
+    result = {}
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     environment.update(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0", LC_ALL="C")
     def git(*args):
@@ -30,35 +31,61 @@ def delivery_status(path, deadline):
         return subprocess.run(["git", "--no-optional-locks", "-C", path, *args],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                               timeout=min(remaining, 1), text=True, env=environment)
+    def value(*args):
+        response = git(*args)
+        return response.stdout.strip() if response.returncode == 0 else None
+    def finish(status):
+        if status is not None:
+            result["deliveryStatus"] = status
+        return result
     try:
+        root = value("rev-parse", "--show-toplevel")
+        if not root:
+            return result
+        result["checkoutPath"] = root
+        branch = value("symbolic-ref", "--quiet", "--short", "HEAD")
+        if branch:
+            result["checkoutBranch"] = branch
+        upstream = value("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+        ahead, behind = None, None
+        if upstream:
+            counts = value("rev-list", "--left-right", "--count", "HEAD...@{upstream}")
+            if counts:
+                ahead, behind = map(int, counts.split())
+                result["upstreamBehind"] = behind
         status = git("status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=none")
-        if status.returncode != 0:
-            return None
-        if status.stdout.strip():
-            return "Needs to merge"
-        directory = git("rev-parse", "--absolute-git-dir")
-        if directory.returncode != 0:
-            return None
-        if any((Path(directory.stdout.strip()) / name).exists() for name in
+        directory = value("rev-parse", "--absolute-git-dir")
+        if directory and any((Path(directory) / name).exists() for name in
                ("index.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "BISECT_LOG")):
-            return "Needs to merge"
-        unpushed = git("rev-list", "--count", "HEAD", "--not", "--remotes")
-        if unpushed.returncode == 0 and int(unpushed.stdout.strip()) > 0:
-            return "Needs to merge"
-        symbolic = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
-        choices = ([symbolic.stdout.strip()] if symbolic.returncode == 0 else []) + ["origin/main", "origin/master", "origin/staging"]
-        for base in choices:
-            if git("rev-parse", "--verify", "--end-of-options", base + "^{commit}").returncode != 0:
-                continue
+            return finish("Git operation")
+        if status.returncode != 0:
+            return result
+        if status.stdout.strip():
+            return finish("Uncommitted changes")
+        unpushed = value("rev-list", "--count", "HEAD", "--not", "--remotes")
+        unpublished = int(unpushed) if unpushed is not None else None
+        if (ahead if ahead is not None else unpublished or 0) > 0:
+            return finish("Needs push")
+        symbolic = value("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+        choices = ([symbolic] if symbolic else []) + ["origin/main", "origin/master", "origin/staging"]
+        base = next((candidate for candidate in choices
+                     if value("rev-parse", "--verify", "--end-of-options", candidate + "^{commit}")), None)
+        if branch and (branch in ("main", "master", "staging", "develop", "development") or (base is not None and base == upstream)):
+            return finish(("Needs pull" if behind > 0 else "Done") if upstream and ahead == 0 and behind is not None else None)
+        if branch and not upstream:
+            return finish("Needs push")
+        if behind is not None and behind > 0:
+            return finish("Needs pull")
+        if base and (ahead == 0 or (not upstream and unpublished == 0)):
             merged = git("merge-base", "--is-ancestor", "HEAD", base)
-            if merged.returncode == 1:
-                return "Needs to merge"
-            if merged.returncode == 0 and unpushed.returncode == 0 and int(unpushed.stdout.strip()) == 0:
-                return "Merged"
-            return None
+            return finish("Merged" if merged.returncode == 0 else "Needs to merge" if merged.returncode == 1 else None)
     except (OSError, ValueError, subprocess.TimeoutExpired, TimeoutError):
         pass
-    return None
+    return result
+
+
+def delivery_status(path, deadline):
+    return delivery_details(path, deadline).get("deliveryStatus")
 
 
 def held_lock(path):
@@ -557,13 +584,13 @@ def collect(home):
     # Share results across chats in one checkout, with a two-second total budget.
     delivery_deadline = min(deadline, time.monotonic() + 2)
     deliveries = {}
-    for item in sessions:
-        if item.get("turnCompleted") and item["state"] in ("Open · idle", "Inactive"):
+    # Inspect live checkouts first so retained history cannot consume the Git budget.
+    for item in sorted(sessions, key=lambda row: row["state"] == "Inactive"):
+        if item["state"] != "Inactive" or item.get("turnCompleted"):
             path = item["cwd"]
             if path not in deliveries:
-                deliveries[path] = delivery_status(path, delivery_deadline)
-            if deliveries[path] is not None:
-                item["deliveryStatus"] = deliveries[path]
+                deliveries[path] = delivery_details(path, delivery_deadline)
+            item.update(deliveries[path])
     sessions.sort(key=lambda item: item["state"] == "Inactive")
     if len(sessions) > LIMIT:
         warnings.append("Remote sessions exceed the inspection limit.")

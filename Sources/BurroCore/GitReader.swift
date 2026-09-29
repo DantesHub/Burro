@@ -49,6 +49,7 @@ public struct GitReader: Sendable {
     }
     public func facts(_ record: WorktreeRecord, base: String?) -> GitFacts {
         var facts = GitFacts(); facts.base = base
+        facts.branch = record.branch == "Detached HEAD" ? nil : record.branch
         guard FileManager.default.fileExists(atPath: record.path) else { facts.errors.append("Folder cannot be inspected"); return facts }
         if FileManager.default.fileExists(atPath: record.path + "/.gitmodules") {
             facts.errors.append("Repository declares submodules; inspect their local data separately")
@@ -68,6 +69,13 @@ public struct GitReader: Sendable {
         }
         let unpushed = runner.git(record.path, ["rev-list", "--count", "HEAD", "--not", "--remotes"])
         if unpushed.succeeded { facts.unpushed = Int(unpushed.output.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        let upstream = runner.git(record.path, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
+        if upstream.succeeded {
+            facts.upstream = upstream.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let divergence = runner.git(record.path, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
+            let counts = divergence.output.split(whereSeparator: \.isWhitespace).compactMap { Int($0) }
+            if divergence.succeeded && counts.count == 2 { facts.upstreamAhead = counts[0]; facts.upstreamBehind = counts[1] }
+        }
         let timestamp = runner.git(record.path, ["log", "-1", "--format=%ct"])
         if let seconds = Double(timestamp.output.trimmingCharacters(in: .whitespacesAndNewlines)) { facts.lastCommit = Date(timeIntervalSince1970: seconds) }
         let gitDir = runner.git(record.path, ["rev-parse", "--absolute-git-dir"])

@@ -8,6 +8,28 @@ final class NotchFeedTests: XCTestCase {
         AgentSession(id: id, provider: .codex, title: id, cwd: "/same/repo", state: state,
             updatedAt: Date(timeIntervalSince1970: 100), evidence: "fixture", isSubagent: child, parentSessionID: parent)
     }
+    func testHeaderCountsWorkspacesOnceWithLiveStatePriority() {
+        var first = agent("one", .idle), second = agent("two", .idle), running = agent("running", .working)
+        for index in 0..<2 {
+            if index == 0 { first.turnCompleted = true; first.deliveryStatus = .needsPush }
+            else { second.turnCompleted = true; second.deliveryStatus = .needsPush }
+        }
+        func summary(_ sessions: [AgentSession]) -> WorkspaceSummary {
+            WorkspaceSummary(NotchWorkspace.grouped(NotchFeed(sessions: sessions, includeIdle: false).groups) { $0.cwd })
+        }
+        XCTAssertEqual(summary([first, second]).count(.needsPush), 1)
+        XCTAssertEqual(summary([first, second, running]).count(.needsPush), 0)
+        XCTAssertEqual(summary([first, second, running]).workingCount, 1)
+        running.id = "running-two"
+        XCTAssertEqual(summary([agent("running"), running]).workingCount, 1)
+        first.deliveryStatus = .synced; first.hasUnreadResult = true
+        second.deliveryStatus = .synced; second.hasUnreadResult = true
+        XCTAssertEqual(summary([first, second]).doneCount, 1)
+        second.cwd = "/different-checkout"
+        XCTAssertEqual(summary([first, second]).doneCount, 2)
+        first.remote = RemoteOrigin(hostID: UUID(), hostName: "offline", sampledAt: Date(), stale: true)
+        XCTAssertEqual(summary([first, second]).doneCount, 1)
+    }
     func testWorkspacesGroupByCheckoutAndMachineNotBranchOrTitle() {
         var first = agent("one"), second = agent("two"), other = agent("other"), remote = agent("remote")
         first.cwd = "/repo/a"; second.cwd = "/repo/a"; other.cwd = "/repo/b"; remote.cwd = "/repo/a"
