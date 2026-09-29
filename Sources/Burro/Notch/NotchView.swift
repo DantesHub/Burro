@@ -54,7 +54,7 @@ struct NotchView: View {
                 compactStatus.frame(height: presentation.compactGeometry.headerHeight)
                     .contentShape(Rectangle()).onTapGesture(perform: onToggle)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Burro: \(summary.workingCount) running, \(summary.scheduledCount) scheduled, \(summary.waitingCount) need input, \(summary.doneCount) completed worktrees, \(cleanup.count) need deletion")
+                    .accessibilityLabel("Burro: \(summary.workingCount) running, \(summary.scheduledCount) scheduled, \(summary.waitingCount) need input, \(summary.doneCount) completed worktrees, \(cleanup.count) to clean up")
                     .accessibilityAddTraits(.isButton).accessibilityAction { onToggle() }
             } else {
                 VStack(spacing: 0) {
@@ -159,7 +159,7 @@ struct NotchView: View {
                 count(summary.workingCount, "running", AgentState.working.color)
                 HStack(spacing: 3) {
                     Image(systemName: "trash").foregroundStyle(.blue)
-                    count(cleanup.count, "need deletion", .blue)
+                    count(cleanup.count, "to clean up", .blue)
                 }.fixedSize()
                 if summary.scheduledCount > 0 { count(summary.scheduledCount, "scheduled", AgentState.scheduled.color) }
                 Spacer(minLength: 0)
@@ -183,12 +183,16 @@ struct NotchView: View {
                     LazyVStack(spacing: 14) {
                         if !unlistedCleanup.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
-                                Label("Merged · Needs deletion", systemImage: "trash").foregroundStyle(.blue).font(.headline)
+                                Label("Merged · Cleanup", systemImage: "trash").foregroundStyle(.blue).font(.headline)
                                 ForEach(unlistedCleanup) { tree in
                                     HStack {
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(tree.title).font(.system(size: 12, weight: .medium))
                                         Text("\(tree.machine) · \(tree.path)").font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                        if !tree.canDelete {
+                                            Text(tree.blockers.joined(separator: "; "))
+                                                .font(.system(size: 9)).foregroundStyle(.orange).lineLimit(3)
+                                        }
                                     }
                                     Spacer(minLength: 8)
                                     deleteButton(tree)
@@ -272,7 +276,7 @@ struct NotchView: View {
                             .foregroundStyle(.white.opacity(0.9))
                         if workspace.status == .running { RunningPulse() }
                         if cleanup.contains(where: { $0.id == workspace.id }) {
-                            Label("Needs deletion", systemImage: "trash").foregroundStyle(.blue)
+                            Label("Merged", systemImage: "trash").foregroundStyle(.blue)
                         } else {
                             Text(workspace.status.rawValue).foregroundStyle(workspace.status.color)
                         }
@@ -296,7 +300,16 @@ struct NotchView: View {
             }
         }
     }
-    private func deleteButton(_ item: NotchCleanup) -> some View {
+    @ViewBuilder private func deleteButton(_ item: NotchCleanup) -> some View {
+        if !item.canDelete {
+            Button("Review") {
+                store.search = ""
+                store.filter = .all
+                store.selection = item.path
+                onOpenDashboard()
+            }.buttonStyle(.bordered).disabled(!item.id.hasPrefix("local:"))
+                .help(item.blockers.joined(separator: "\n"))
+        } else {
         Button(role: .destructive) {
             pendingDeletion = item
         } label: {
@@ -307,7 +320,8 @@ struct NotchView: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.red.opacity(0.45)))
         }.buttonStyle(.plain)
             .disabled(deletingID != nil || !item.id.hasPrefix("local:"))
-            .help(item.id.hasPrefix("local:") ? "Delete this merged worktree; keep its branch" : "Remote deletion is not supported yet")
+            .help("Delete this merged worktree; keep its branch")
+        }
     }
     private func workspacePreview(_ workspace: NotchWorkspace, session: AgentSession) -> some View {
         VStack(alignment: .leading, spacing: 8) {

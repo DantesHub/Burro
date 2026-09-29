@@ -6,6 +6,8 @@ public struct NotchCleanup: Identifiable, Sendable {
     public var path: String
     public var title: String
     public var machine: String
+    public var canDelete: Bool = false
+    public var blockers: [String] = []
 
     public static func inventory(worktrees: [Worktree], sessions: [AgentSession]) -> [Self] {
         func active(_ sessions: [AgentSession]) -> Bool {
@@ -15,7 +17,8 @@ public struct NotchCleanup: Identifiable, Sendable {
             guard !tree.isPrimary, !tree.isMissing, !tree.isLocked, !tree.protectedByUser,
                   tree.facts.merged == true, DeliveryStatus.evaluate(tree.facts) == .merged,
                   tree.processes.isEmpty, !active(tree.agents + sessions.filter { $0.remote == nil && ($0.cwd == tree.path || $0.checkoutPath == tree.path || $0.attachedPaths.contains(tree.path)) }), !tree.agents.contains(where: \.pinned) else { return nil }
-            return Self(id: "local:" + tree.path, path: tree.path, title: tree.branch, machine: "This Mac")
+            return Self(id: "local:" + tree.path, path: tree.path, title: tree.branch, machine: "This Mac", canDelete: tree.assessment.level == .candidate,
+                blockers: tree.assessment.level == .candidate ? [] : tree.assessment.reasons)
         }
         let remote = Dictionary(grouping: sessions.filter { $0.remote != nil && $0.checkoutPath != nil }) {
             $0.remote!.hostID.uuidString + ":" + $0.checkoutPath!
@@ -25,7 +28,7 @@ public struct NotchCleanup: Identifiable, Sendable {
                   chats.allSatisfy({ $0.remote?.stale == false && $0.checkoutIsLinked == true && $0.deliveryStatus == .merged }),
                   let chat = chats.first, let path = chat.checkoutPath else { continue }
             result.append(Self(id: id, path: path, title: chat.checkoutBranch ?? URL(fileURLWithPath: path).lastPathComponent,
-                               machine: chat.remote!.hostName))
+                               machine: chat.remote!.hostName, blockers: ["Remote deletion is not supported yet"]))
         }
         return result.sorted { $0.id < $1.id }
     }
