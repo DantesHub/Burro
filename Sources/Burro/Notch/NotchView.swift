@@ -27,7 +27,7 @@ struct NotchView: View {
                 compactStatus.frame(height: presentation.compactGeometry.headerHeight)
                     .contentShape(Rectangle()).onTapGesture(perform: onToggle)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Burro: \(activity.workingCount) running, \(activity.waitingCount) need input, \(activity.doneCount) done and unread")
+                    .accessibilityLabel("Burro: \(activity.workingCount) running, \(activity.scheduledCount) scheduled, \(activity.waitingCount) need input, \(activity.doneCount) done and unread")
                     .accessibilityAddTraits(.isButton).accessibilityAction { onToggle() }
             } else {
                 VStack(spacing: 0) {
@@ -63,7 +63,9 @@ struct NotchView: View {
     }
     private var compactStatus: some View {
         HStack(spacing: 0) {
-            statusCount(activity.workingCount, symbol: "waveform.path", color: activity.workingCount > 0 ? AgentState.working.color : .gray)
+            statusCount(activity.workingCount > 0 ? activity.workingCount : activity.scheduledCount,
+                symbol: activity.workingCount == 0 && activity.scheduledCount > 0 ? "clock" : "waveform.path",
+                color: activity.workingCount > 0 ? AgentState.working.color : (activity.scheduledCount > 0 ? AgentState.scheduled.color : .gray))
                 .frame(maxWidth: .infinity)
             Color.clear.frame(width: presentation.compactGeometry.hardwareGap)
             statusCount(activity.attentionCount, symbol: "tray.fill",
@@ -100,6 +102,7 @@ struct NotchView: View {
                 if activity.waitingCount > 0 { count(activity.waitingCount, "need you", NotchStyle.attention) }
                 if activity.doneCount > 0 { count(activity.doneCount, "done", .blue) }
                 count(activity.workingCount, "running", AgentState.working.color)
+                if activity.scheduledCount > 0 { count(activity.scheduledCount, "scheduled", AgentState.scheduled.color) }
                 Spacer(minLength: 0)
                 Menu {
                     Toggle("Include idle chats", isOn: $presentation.includeIdle)

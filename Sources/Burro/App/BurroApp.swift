@@ -63,6 +63,7 @@ struct MonitorMenu: View {
     var body: some View {
         Text("\(store.activeAgents.count) agents working")
         Text("\(store.agentActivity.waitingCount) need input")
+        if store.agentActivity.scheduledCount > 0 { Text("\(store.agentActivity.scheduledCount) scheduled") }
         Divider()
         Button("Show Agent Notch") { notch.show() }
         Toggle("Enable Notch", isOn: $store.notchEnabled)

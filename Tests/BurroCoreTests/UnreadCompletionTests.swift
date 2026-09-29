@@ -26,7 +26,7 @@ final class UnreadCompletionTests: XCTestCase {
         var read = ProviderReadState.empty; read.codexUnread = [id]
         let closed = read.applying(to: agent(.inactive))
         XCTAssertTrue(closed.isDone); XCTAssertFalse(closed.state.keepsWorktree)
-        for state in [AgentState.working, .waiting, .unknown, .recent] { XCTAssertFalse(read.applying(to: agent(state)).isDone) }
+        for state in [AgentState.working, .waiting, .scheduled, .unknown, .recent] { XCTAssertFalse(read.applying(to: agent(state)).isDone) }
         var noResult = agent(); noResult.turnCompleted = false
         XCTAssertFalse(read.applying(to: noResult).isDone)
     }

@@ -38,7 +38,7 @@ final class SafetyTests: XCTestCase {
         XCTAssertEqual(assess(facts: facts).level, .review)
     }
     func testIdleAndUncertainAgentsProtectWorktree() {
-        for state in [AgentState.working, .waiting, .idle, .recent, .unknown] {
+        for state in [AgentState.working, .waiting, .scheduled, .idle, .recent, .unknown] {
             XCTAssertEqual(assess(agents: [session(state)]).level, .keep, state.rawValue)
         }
         XCTAssertEqual(assess(agents: [session(.inactive)]).level, .candidate)

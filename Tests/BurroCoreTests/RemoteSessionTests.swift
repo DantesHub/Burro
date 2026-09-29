@@ -67,6 +67,17 @@ final class RemoteSessionTests: XCTestCase {
         XCTAssertFalse(stale[0].isDone)
     }
 
+    func testRemoteScheduledStateHasSeparateCountAndExpiresToUnknown() throws {
+        let host = RemoteHost(name: "Laptop", destination: "laptop")
+        let input = Data(String(decoding: payload(), as: UTF8.self).replacingOccurrences(of: "Working", with: "Scheduled").utf8)
+        let snapshot = try RemoteAgentMonitor.decode(input, host: host, receivedAt: now)
+        let live = AgentActivitySnapshot(sessions: snapshot.displaySessions(now: now), warnings: [], sampledAt: now)
+        XCTAssertEqual(live.scheduledCount, 1); XCTAssertEqual(live.workingCount, 0)
+        XCTAssertEqual(live.visibleSessions(includeIdle: false).count, 2)
+        let stale = AgentActivitySnapshot(sessions: snapshot.displaySessions(now: now.addingTimeInterval(31)), warnings: [], sampledAt: now)
+        XCTAssertEqual(stale.scheduledCount, 0)
+    }
+
     func testOfflineSessionsBecomeLastSeenAndStopCountingAsWorking() throws {
         let host = RemoteHost(name: "Laptop", destination: "laptop")
         let online = try RemoteAgentMonitor.decode(payload(), host: host, receivedAt: now)

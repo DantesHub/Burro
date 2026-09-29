@@ -8,6 +8,12 @@ public struct ProcessSnapshot: Sendable {
     public var warnings: [String]
 }
 public enum ProcessReader {
+    static func isCurrent(_ process: LocalProcess) -> Bool {
+        var info = BurroProcess()
+        return burro_process_info(Int32(process.pid), &info) == 1 && info.uid == getuid()
+            && Double(info.started) == process.started.timeIntervalSince1970
+            && (process.parentPID == nil || Int(info.ppid) == process.parentPID)
+    }
     public static func snapshot() -> ProcessSnapshot {
         let count = burro_list_pids(nil, 0)
         guard count > 0 else { return ProcessSnapshot(processes: [], warnings: ["Local processes could not be inspected"]) }
@@ -22,7 +28,7 @@ public enum ProcessReader {
             let name = path.contains("/claude/versions/") ? "claude" : URL(fileURLWithPath: path).lastPathComponent
             if info.cwd_readable == 0 && ["codex", "claude"].contains(name) { deniedAgent = true }
             let cwd = withUnsafePointer(to: &info.cwd) { String(cString: UnsafeRawPointer($0).assumingMemoryBound(to: CChar.self)) }
-            values.append((LocalProcess(pid: Int(pid), name: name, cwd: cwd.isEmpty ? "" : Paths.canonical(cwd), started: Date(timeIntervalSince1970: Double(info.started))), Int(info.ppid)))
+            values.append((LocalProcess(pid: Int(pid), name: name, cwd: cwd.isEmpty ? "" : Paths.canonical(cwd), started: Date(timeIntervalSince1970: Double(info.started)), parentPID: Int(info.ppid)), Int(info.ppid)))
         }
         var excluded: Set<Int> = [Int(getpid())]
         var previous = 0

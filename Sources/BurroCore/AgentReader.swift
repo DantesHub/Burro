@@ -170,6 +170,7 @@ public struct AgentReader: Sendable {
         }
         do {
             let completed = ProviderReadState.claudeCompletedSessions(home: home)
+            let deadline = ProcessInfo.processInfo.systemUptime + 1.5
             for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) where file.pathExtension == "json" {
                 guard let data = try? Data(contentsOf: file), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let id = object["sessionId"] as? String, let cwd = object["cwd"] as? String, let pid = object["pid"] as? Int else {
@@ -183,13 +184,20 @@ public struct AgentReader: Sendable {
                 if process != nil && !live { state = .unknown }
                 let updated = Date(timeIntervalSince1970: (object["updatedAt"] as? Double ?? object["startedAt"] as? Double ?? 0) / 1000)
                 if !processes.warnings.isEmpty && process == nil { state = .unknown }
+                var evidence = live ? "Live Claude PID and verified process start + reported session status" : "No matching live Claude process, or process identity is uncertain"
+                if state == .idle, let process,
+                   let delegated = ClaudeDelegatedActivity.inspect(home: home, sessionID: id, parent: process,
+                       incarnation: (object["startedAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) },
+                       processes: processes.processes, now: now, deadline: deadline) {
+                    state = delegated.state; evidence = delegated.evidence
+                }
                 result.sessions.append(AgentSession(id: "claude:\(id)", provider: .claude,
                     title: object["name"] as? String ?? "Claude Code session", cwd: Paths.canonical(cwd),
                     state: state, updatedAt: updated, pid: live ? pid : nil,
-                    evidence: live ? "Live Claude PID and verified process start + reported session status" : "No matching live Claude process, or process identity is uncertain",
+                    evidence: evidence,
                     claudeDesktopSessionID: object["hostSessionId"] as? String,
                     claudeBridgeSessionID: object["bridgeSessionId"] as? String,
-                    turnCompleted: completed.contains(object["hostSessionId"] as? String ?? "") && object["status"] as? String == "idle"))
+                    turnCompleted: completed.contains(object["hostSessionId"] as? String ?? "") && object["status"] as? String == "idle" && (state == .idle || state == .inactive)))
                 result.roots.append(cwd)
             }
         } catch { result.warnings.append("Claude session directory could not be read") }

@@ -8,7 +8,7 @@ public struct NotchGroup: Identifiable, Sendable {
     public var unavailableIDs: Set<String> = []
     public var members: [AgentSession] { (root.map { [$0] } ?? []) + workers }
     public var title: String { root?.title ?? "Background workers" }
-    public var priority: Int { members.map(Self.priority).min() ?? 5 }
+    public var priority: Int { members.map(Self.priority).min() ?? 6 }
     public var newest: Date { members.map(\.updatedAt).max() ?? .distantPast }
     public static func priority(_ session: AgentSession) -> Int {
         if session.remote?.stale == true { return 3 }
@@ -17,8 +17,9 @@ public struct NotchGroup: Identifiable, Sendable {
         switch session.state {
         case .working: return 2
         case .unknown: return 3
-        case .recent: return 4
-        default: return 5
+        case .scheduled: return 4
+        case .recent: return 5
+        default: return 6
         }
     }
 }

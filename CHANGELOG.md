@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2 — Unreleased
+
+- Detect local Claude background commands and subagents even while their parent reports idle.
+- Show local and remote delayed background commands as Scheduled with a teal clock. Keep them visible without inflating Running or Needs you counts, preserve permission requests, and suppress Done until delegated work ends. Explicit live sleep tasks qualify; ordinary sleeping processes do not.
+
 ## 0.4.1 — Unreleased
 
 - Keep remote Claude chats active while their subagents or session-owned background commands are still running, even when the parent registry reports idle. Preserve permission requests, reject old/completed worker evidence, and suppress unread Done until work finishes.

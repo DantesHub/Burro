@@ -47,6 +47,7 @@ struct NotchAgentRow: View {
                 Spacer(minLength: 6)
                 HStack(spacing: 4) {
                     if session.isDone && available && workerLabel == nil { Image(systemName: "checkmark.circle.fill").font(.system(size: 9)) }
+                    else if session.state == .scheduled && available && session.remote?.stale != true && workerLabel == nil { Image(systemName: "clock").font(.system(size: 10)) }
                     else { Circle().fill(color).frame(width: 4, height: 4) }
                     Text(label)
                 }.font(.system(size: 10, weight: .medium)).foregroundStyle(color)

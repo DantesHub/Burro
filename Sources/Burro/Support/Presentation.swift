@@ -50,7 +50,7 @@ extension SafetyLevel {
 }
 extension AgentState {
     var color: Color {
-        switch self { case .working: .green; case .waiting: .orange; case .recent: .blue; case .unknown: .orange; default: .secondary }
+        switch self { case .working: .green; case .scheduled: .teal; case .waiting: .orange; case .recent: .blue; case .unknown: .orange; default: .secondary }
     }
 }
 enum Layout {

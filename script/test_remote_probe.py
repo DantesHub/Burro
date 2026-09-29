@@ -100,7 +100,7 @@ class ProbeTests(unittest.TestCase):
     def test_collect_idle_parent_stays_working_for_background_task_then_completes(self):
         with tempfile.TemporaryDirectory(prefix='burro-delegated-') as directory:
             home = Path(directory); sid, path, record = self.delegated_fixture(home)
-            with patch.object(probe, 'claude_identity', return_value=True), patch.object(probe, 'claude_process_tree', return_value={123: 1, 124: 123}), patch.object(probe, 'claude_background_tasks', return_value={'task-a'}) as tasks:
+            with patch.object(probe, 'claude_identity', return_value=True), patch.object(probe, 'claude_process_tree', return_value={123: 1, 124: 123}), patch.object(probe, 'claude_background_tasks', return_value={'task-a': {124}}) as tasks:
                 result = probe.collect(home)
                 self.assertEqual(len(result['sessions']), 1)
                 self.assertEqual(result['sessions'][0]['state'], 'Working')
@@ -110,6 +110,29 @@ class ProbeTests(unittest.TestCase):
                 result = probe.collect(home)
                 self.assertEqual(result['sessions'][0]['state'], 'Open · idle')
                 self.assertTrue(result['sessions'][0]['turnCompleted'])
+
+    def test_remote_scheduled_task_uses_owned_branch_and_executable_names(self):
+        rows = {10: 1, 11: 10, 12: 11, 13: 10}
+        names = subprocess.CompletedProcess([], 0, '11 /bin/zsh\n12 sleep\n', '')
+        with patch.object(probe.subprocess, 'run', return_value=names):
+            self.assertTrue(probe.claude_scheduled_tasks({'task': {11, 12}}, rows))
+            names.stdout = '11 /bin/zsh\n12 /usr/bin/python3\n'
+            self.assertFalse(probe.claude_scheduled_tasks({'task': {11, 12}}, rows))
+            names.stdout = '11 /usr/bin/node\n12 sleep\n'
+            self.assertFalse(probe.claude_scheduled_tasks({'task': {11, 12}}, rows))
+            names.stdout = '11 /bin/zsh\n12 sleep\n13 /usr/bin/python3\n'
+            self.assertFalse(probe.claude_scheduled_tasks({'task': {11, 12}, 'other': {13}}, rows))
+
+    def test_collect_scheduled_stays_visible_without_done_and_returns_to_running(self):
+        with tempfile.TemporaryDirectory(prefix='burro-scheduled-') as directory:
+            home = Path(directory); sid, path, record = self.delegated_fixture(home)
+            with patch.object(probe, 'claude_identity', return_value=True), patch.object(probe, 'claude_process_tree', return_value={123: 1, 124: 123}), patch.object(probe, 'claude_background_tasks', return_value={'task-a': {124}}), patch.object(probe, 'claude_scheduled_tasks', return_value=True) as scheduled:
+                result = probe.collect(home)['sessions'][0]
+                self.assertEqual(result['state'], 'Scheduled')
+                self.assertFalse(result['turnCompleted'])
+                self.assertIn('live sleep delay', result['evidence'])
+                scheduled.return_value = False
+                self.assertEqual(probe.collect(home)['sessions'][0]['state'], 'Working')
 
     def test_collect_waiting_parent_is_not_hidden_by_background_work(self):
         with tempfile.TemporaryDirectory(prefix='burro-delegated-') as directory:

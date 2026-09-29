@@ -3,7 +3,7 @@ import Foundation
 
 public enum AgentProvider: String, Codable, Sendable { case codex = "Codex", claude = "Claude Code" }
 public enum AgentState: String, Codable, Sendable {
-    case working = "Working", waiting = "Needs input", idle = "Open · idle"
+    case working = "Working", waiting = "Needs input", scheduled = "Scheduled", idle = "Open · idle"
     case recent = "Recent activity", inactive = "Inactive", unknown = "Unknown"
     public var keepsWorktree: Bool { self != .inactive }
 }
@@ -35,6 +35,7 @@ public struct LocalProcess: Codable, Sendable {
     public var name: String
     public var cwd: String
     public var started: Date
+    public var parentPID: Int? = nil
 }
 public enum SafetyLevel: String, Codable, Sendable {
     case keep = "Keep", review = "Review", candidate = "Safe candidate"
@@ -78,6 +79,7 @@ public struct Worktree: Identifiable, Codable, Sendable {
     public var activity: String {
         if isWorking { return "Working" }
         if agents.contains(where: { $0.state == .waiting }) { return "Needs input" }
+        if agents.contains(where: { $0.state == .scheduled }) { return "Scheduled" }
         if isInUse { return "In use" }
         return "Inactive"
     }

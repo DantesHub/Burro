@@ -16,6 +16,7 @@ public struct AgentActivitySnapshot: Sendable {
     }
     public var attentionCount: Int { waitingCount + doneCount }
     public var workingCount: Int { uniqueSessions.filter { $0.state == .working }.count }
+    public var scheduledCount: Int { uniqueSessions.filter { $0.state == .scheduled }.count }
     public var waitingCount: Int { uniqueSessions.filter { $0.state == .waiting }.count }
     public var idleCount: Int { uniqueSessions.filter { $0.state == .idle && !$0.isDone }.count }
     public var doneCount: Int { uniqueSessions.filter(\.isDone).count }
@@ -35,9 +36,10 @@ public struct AgentActivitySnapshot: Sendable {
         case .waiting: 0
         case .working: 2
         case .unknown: 3
-        case .recent: 4
-        case .idle: 5
-        case .inactive: 6
+        case .scheduled: 4
+        case .recent: 5
+        case .idle: 6
+        case .inactive: 7
         }
     }
 }

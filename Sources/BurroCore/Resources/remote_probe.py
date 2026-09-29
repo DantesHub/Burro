@@ -247,8 +247,8 @@ def claude_task_id(path, sid):
     return Path(parts[-1]).stem
 
 
-def claude_task_descriptors(output, sid, descendants):
-    tasks, pid, writable = set(), None, False
+def claude_task_descriptors(output, sid, descendants, owners=False):
+    tasks, pid, writable = {}, None, False
     for line in output.splitlines():
         if line.startswith("p"):
             pid = int(line[1:]) if line[1:].isdigit() else None
@@ -260,23 +260,23 @@ def claude_task_descriptors(output, sid, descendants):
         elif line.startswith("n") and pid in descendants and writable:
             task = claude_task_id(line[1:], sid)
             if task:
-                tasks.add(task)
-    return tasks
+                tasks.setdefault(task, set()).add(pid)
+    return tasks if owners else set(tasks)
 
 
-def claude_background_tasks(pid, sid, rows):
+def claude_background_tasks(pid, sid, rows, owners=False):
     if pid not in rows:
         raise OSError("Parent process is absent from the inspection snapshot")
     descendants = claude_descendants(pid, rows)
     if not descendants:
-        return set()
+        return {} if owners else set()
     if sys.platform == "darwin":
         result = subprocess.run(["/usr/sbin/lsof", "-a", "-p", ",".join(map(str, sorted(descendants))),
                                  "-d", "1,2", "-Fpfan"], capture_output=True, text=True, timeout=1)
         if result.returncode not in (0, 1) or result.stderr.strip():
             raise OSError("Task descriptors unavailable")
-        return claude_task_descriptors(result.stdout, sid, descendants)
-    tasks = set()
+        return claude_task_descriptors(result.stdout, sid, descendants, owners)
+    tasks = {}
     for child in descendants:
         for fd in ("1", "2"):
             try:
@@ -286,12 +286,37 @@ def claude_background_tasks(pid, sid, rows):
                     continue
                 task = claude_task_id(os.readlink(root / "fd" / fd), sid)
                 if task:
-                    tasks.add(task)
+                    tasks.setdefault(task, set()).add(child)
             except (FileNotFoundError, ProcessLookupError):
                 continue
             except (PermissionError, ValueError, StopIteration):
                 raise OSError("Task descriptors unavailable")
-    return tasks
+    return tasks if owners else set(tasks)
+
+
+def claude_scheduled_tasks(tasks, rows):
+    # Read executable names, never command arguments. A sleep elsewhere in the session does not count.
+    branches = {}
+    for task, owners in tasks.items():
+        branch = set(owners)
+        for pid in owners:
+            branch.update(claude_descendants(pid, rows))
+        branches[task] = branch
+    pids = set().union(*branches.values())
+    result = subprocess.run(["/bin/ps", "-p", ",".join(map(str, sorted(pids))), "-o", "pid=,comm="],
+                            capture_output=True, text=True, timeout=1)
+    if result.returncode != 0:
+        return False
+    names = {}
+    for line in result.stdout.splitlines():
+        values = line.strip().split(None, 1)
+        if len(values) == 2 and values[0].isdigit():
+            names[int(values[0])] = Path(values[1]).name
+    wrappers = {"sh", "bash", "zsh", "dash", "ksh"}
+    return all(any(names.get(pid) == "sleep" for pid in branch) and
+               all(names.get(pid) == "sleep" or
+                   (names.get(pid) in wrappers and any(rows.get(child) == pid for child in branch))
+                   for pid in branch) for branch in branches.values())
 
 
 def claude_delegated_state(home, record, live, now, deadline, process_rows):
@@ -306,9 +331,17 @@ def claude_delegated_state(home, record, live, now, deadline, process_rows):
             states = claude_worker_states(home, sid, started, now, deadline)
         if time.monotonic() > deadline or process_rows is False:
             raise OSError("Background process visibility is incomplete")
-        tasks = claude_background_tasks(record["pid"], sid, process_rows)
-        if tasks or "Working" in states:
+        tasks = claude_background_tasks(record["pid"], sid, process_rows, owners=True)
+        if "Working" in states:
             return "Working", len(tasks) + states.count("Working")
+        if tasks:
+            try:
+                scheduled = time.monotonic() <= deadline and claude_scheduled_tasks(tasks, process_rows)
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                scheduled = False  # Owned live work is certain even if its sleep phase is not.
+            if scheduled:
+                return ("Unknown", 0) if "Unknown" in states else ("Scheduled", len(tasks))
+            return "Working", len(tasks)
         return ("Unknown", 0) if "Unknown" in states else (None, 0)
     except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
         return ("Working", states.count("Working")) if "Working" in states else ("Unknown", 0)
@@ -464,6 +497,8 @@ def collect(home):
                         sessions[-1]["turnCompleted"] = has_result
                         if delegated == "Working" and state == "Working":
                             sessions[-1]["evidence"] = "Verified Claude process with %d active delegated task(s); parent reports idle." % delegated_count
+                        elif delegated == "Scheduled" and state == "Scheduled":
+                            sessions[-1]["evidence"] = "Verified Claude background task waiting in a live sleep delay; resumes automatically."
                         elif delegated == "Unknown":
                             sessions[-1]["evidence"] = "Claude reports idle; delegated work could not be confirmed complete."
                         for source, target in (("hostSessionId", "claudeDesktopSessionID"),
