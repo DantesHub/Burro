@@ -33,6 +33,20 @@ final class NotchFeedTests: XCTestCase {
         XCTAssertEqual(feed.groups.map(\.id), ["edited"])
         XCTAssertEqual(feed.inventory.count, 2)
     }
+    func testCodeOnlyFeedKeepsActiveChatsWithIncompleteRemoteEdits() {
+        var sessions: [AgentSession] = []
+        for (id, state) in [("running", AgentState.working), ("waiting", .waiting), ("scheduled", .scheduled), ("idle", .idle), ("inactive", .inactive)] {
+            var session = agent(id, state)
+            session.remote = RemoteOrigin(hostID: UUID(), hostName: "Other Mac", sampledAt: Date(), stale: false)
+            session.edits = ChatEdits(hasEdits: false, added: 0, removed: 0, exact: false)
+            sessions.append(session)
+        }
+        sessions.append(agent("missing-log"))
+        let feed = NotchFeed(sessions: sessions, includeIdle: true, codeOnly: true)
+        XCTAssertEqual(Set(feed.groups.map(\.id)), Set(["running", "waiting", "scheduled", "missing-log"]))
+        XCTAssertEqual(feed.inventory.count, 6)
+        XCTAssertEqual(WorkspaceSummary(NotchWorkspace.grouped(feed.groups) { $0.cwd }).workingCount, 2)
+    }
     func testHoverPreviewCapsAtFiveChatsAndReportsRemainder() {
         for count in [1, 5, 12] {
             let sessions = (0..<count).map { agent("chat-\($0)") }

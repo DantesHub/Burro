@@ -744,7 +744,7 @@ def collect(home):
                         sessions.append(session("claude:" + sid, "Claude Code", record.get("name") or "Claude Code session",
                                                 cwd, state, updated, "Remote PID/start-time identity and reported session status.", pid=pid if live else None))
                         sessions[-1]["turnCompleted"] = has_result
-                        sessions[-1]["edits"] = chat_edit_stats(claude_edit_path(home, cwd, sid), min(time.monotonic() + 0.15, deadline - 3))
+                        sessions[-1]["edits"] = chat_edit_stats(claude_edit_path(home, cwd, sid), min(time.monotonic() + 0.15, deadline - 1))
                         if delegated == "Working" and state == "Working":
                             sessions[-1]["evidence"] = "Verified Claude process with %d active delegated task(s); parent reports idle." % delegated_count
                         elif delegated == "Scheduled" and state == "Scheduled":

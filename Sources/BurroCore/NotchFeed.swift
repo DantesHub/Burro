@@ -32,7 +32,12 @@ public struct NotchFeed: Sendable {
         for session in sessions where inventory[session.id] == nil { inventory[session.id] = session }
         self.inventory = inventory
         func visible(_ session: AgentSession) -> Bool {
-            (!codeOnly || session.edits?.hasEdits == true) && (session.showsCompletion || (session.state != .inactive && (includeIdle || session.state != .idle)))
+            // A bounded/missing transcript is unknown, not proof of a conversation-only chat.
+            // Keep live work visible while preserving the filter for confirmed non-edit chats.
+            let active = session.state == .working || session.state == .waiting || session.state == .scheduled
+            let incompleteActive = active && session.edits?.exact != true
+            return (!codeOnly || session.edits?.hasEdits == true || incompleteActive)
+                && (session.showsCompletion || (session.state != .inactive && (includeIdle || session.state != .idle)))
         }
         // Follow only explicit, same-provider/same-host links. Never infer ownership from cwd/title.
         func root(for worker: AgentSession) -> AgentSession? {

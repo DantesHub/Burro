@@ -117,6 +117,22 @@ class ProbeTests(unittest.TestCase):
             shell['payload']['item']['exit_code'] = 1
             self.assertFalse(check([shell])['hasEdits'])
 
+    def test_incomplete_edit_scan_never_confirms_no_edits(self):
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.jsonl') as log:
+            log.write(json.dumps(dict(type='assistant', message=dict(content='conversation'))) + '\n')
+            log.flush()
+            result = probe.chat_edit_stats(log.name, time.monotonic() - 1)
+            self.assertFalse(result['hasEdits'])
+            self.assertFalse(result['exact'])
+            # An old edit can fall outside the bounded tail of a large active transcript.
+            log.seek(0); log.truncate()
+            log.write(json.dumps(dict(toolUseResult=dict(structuredPatch=[dict(lines=['+code'])]))) + '\n')
+            log.write(' ' * (16 * 1024 * 1024) + '\n')
+            log.write('{}\n'); log.flush()
+            result = probe.chat_edit_stats(log.name)
+            self.assertFalse(result['hasEdits'])
+            self.assertFalse(result['exact'])
+
     def worker_event(self, sid, agent='worker-a', age=0, stop='tool_use', started=None):
         from datetime import datetime, timezone
         stamp = time.time() - age if started is None else started
