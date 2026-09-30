@@ -7,6 +7,17 @@ public struct NotchWorkspace: Identifiable, Sendable {
     public var previewGroups: [NotchGroup] { Array(groups.prefix(5)) }
     public var previewOverflow: Int { max(0, groups.count - 5) }
     public var sessions: [AgentSession] { groups.flatMap(\.members) }
+    public var runningChatCount: Int {
+        groups.filter { group in
+            group.members.contains { $0.state == .working && $0.remote?.stale != true && !group.unavailableIDs.contains($0.id) }
+        }.count
+    }
+    public var newestActivity: Date { sessions.map(\.updatedAt).max() ?? .distantPast }
+    public static func orderedBefore(_ a: Self, _ b: Self) -> Bool {
+        if a.runningChatCount != b.runningChatCount { return a.runningChatCount > b.runningChatCount }
+        if a.newestActivity != b.newestActivity { return a.newestActivity > b.newestActivity }
+        return a.id < b.id
+    }
     public var editTotals: ChatEdits? {
         let unique = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let edits = unique.values.compactMap(\.edits).filter(\.hasEdits)
@@ -45,7 +56,7 @@ public struct NotchWorkspace: Identifiable, Sendable {
             if let index = indices[key] { result[index].groups.append(group) }
             else { indices[key] = result.count; result.append(Self(id: key, groups: [group])) }
         }
-        return result
+        return result.sorted(by: Self.orderedBefore)
     }
 }
 
@@ -88,6 +99,9 @@ public struct NotchProject: Identifiable, Sendable {
     public var machine: String
     public var workspaces: [NotchWorkspace]
     public var name: String { URL(fileURLWithPath: path).lastPathComponent }
+    public var runningWorktreeCount: Int { workspaces.filter { $0.runningChatCount > 0 }.count }
+    public var runningChatCount: Int { workspaces.reduce(0) { $0 + $1.runningChatCount } }
+    public var newestActivity: Date { workspaces.map(\.newestActivity).max() ?? .distantPast }
     public static func grouped(_ workspaces: [NotchWorkspace], repository: (AgentSession) -> String) -> [Self] {
         var result: [Self] = []
         var indices: [String: Int] = [:]
@@ -101,6 +115,15 @@ public struct NotchProject: Identifiable, Sendable {
                 result.append(Self(id: key, path: path, machine: session.remote?.hostName ?? "This Mac", workspaces: [workspace]))
             }
         }
-        return result
+        return result.map { project in
+            var project = project
+            project.workspaces.sort(by: NotchWorkspace.orderedBefore)
+            return project
+        }.sorted { a, b in
+            if a.runningWorktreeCount != b.runningWorktreeCount { return a.runningWorktreeCount > b.runningWorktreeCount }
+            if a.runningChatCount != b.runningChatCount { return a.runningChatCount > b.runningChatCount }
+            if a.newestActivity != b.newestActivity { return a.newestActivity > b.newestActivity }
+            return a.id < b.id
+        }
     }
 }

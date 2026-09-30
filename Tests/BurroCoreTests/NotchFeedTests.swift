@@ -66,6 +66,34 @@ final class NotchFeedTests: XCTestCase {
         XCTAssertEqual(projects.first { $0.path == "/repo/main" && $0.machine == "This Mac" }?.workspaces.count, 2)
         XCTAssertEqual(projects.first { $0.machine == "Remote" }?.workspaces.count, 1)
     }
+    func testProjectsRankRunningWorktreesThenChatsThenRecency() {
+        func session(_ id: String, _ project: String, _ checkout: String, _ state: AgentState, _ time: Double) -> AgentSession {
+            var value = agent(id, state)
+            value.cwd = project + "/" + checkout
+            value.updatedAt = Date(timeIntervalSince1970: time)
+            value.turnCompleted = state == .idle
+            return value
+        }
+        let sessions = [
+            session("old", "old", "main", .idle, 1),
+            session("recent", "recent", "main", .idle, 1000),
+            session("a1", "many-trees", "one", .working, 2),
+            session("a2", "many-trees", "two", .working, 3),
+            session("b1", "many-chats", "one", .working, 10),
+            session("b2", "many-chats", "one", .working, 11),
+            session("b3", "many-chats", "one", .working, 12),
+            session("c1", "single", "one", .working, 500),
+            session("a-old", "many-trees", "old", .idle, 900)
+        ]
+        let workspaces = NotchWorkspace.grouped(NotchFeed(sessions: sessions, includeIdle: true).groups) { $0.cwd }
+        let projects = NotchProject.grouped(workspaces) { $0.cwd.components(separatedBy: "/")[0] }
+        XCTAssertEqual(projects.map(\.path), ["many-trees", "many-chats", "single", "recent", "old"])
+        XCTAssertEqual(projects[0].workspaces.map { $0.sessions[0].id }, ["a2", "a1", "a-old"])
+        var stale = agent("stale")
+        stale.remote = RemoteOrigin(hostID: UUID(), hostName: "Offline", sampledAt: Date(), stale: true)
+        let staleTree = NotchWorkspace.grouped(NotchFeed(sessions: [stale], includeIdle: true).groups) { $0.cwd }[0]
+        XCTAssertEqual(staleTree.runningChatCount, 0)
+    }
     func testHeaderCountsWorkspacesOnceWithLiveStatePriority() {
         var first = agent("one", .idle), second = agent("two", .idle), running = agent("running", .working)
         for index in 0..<2 {
