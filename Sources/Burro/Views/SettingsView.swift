@@ -12,6 +12,11 @@ struct SettingsView: View {
                 Text("Hover to expand and move away to collapse. Use the pin button to keep it open. Agent status refreshes about every 3 seconds. Automatic placement prefers a display with a camera notch.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Notifications") {
+                Toggle("Notify when a chat finishes", isOn: $store.notifyOnCompletion)
+                Text("Alerts for chats seen working on this Mac or a connected remote Mac. Allow Burro notifications in macOS System Settings to receive banners and sounds.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             RemoteHostsSection(store: store)
             Section("Discovery") {
                 Toggle("Discover repositories automatically", isOn: $store.discover)

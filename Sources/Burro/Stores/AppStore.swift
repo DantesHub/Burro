@@ -22,6 +22,13 @@ import BurroCore
     var notchEnabled: Bool { didSet { save(); onNotchPreferenceChange?() } }
     var notchPreferMainDisplay: Bool { didSet { save(); onNotchPreferenceChange?() } }
     @ObservationIgnored var onNotchPreferenceChange: (() -> Void)?
+    var notifyOnCompletion: Bool {
+        didSet {
+            defaults.set(notifyOnCompletion, forKey: "notifyOnCompletion")
+            if notifyOnCompletion { ChatNotifications.shared.requestPermission() }
+        }
+    }
+    private var completionTracker = ChatCompletionTracker()
     var search = ""
     var selection: String?
     var filter: WorktreeFilter = .all
@@ -36,6 +43,7 @@ import BurroCore
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        notifyOnCompletion = defaults.object(forKey: "notifyOnCompletion") as? Bool ?? true
         remoteHosts = defaults.data(forKey: "remoteHosts").flatMap { try? JSONDecoder().decode([RemoteHost].self, from: $0) } ?? []
         PreferencesMigration.migrate(into: defaults, legacy: defaults.persistentDomain(forName: "local.grove.worktrees") ?? [:])
         notchEnabled = defaults.object(forKey: "notchEnabled") as? Bool ?? true
@@ -83,6 +91,7 @@ import BurroCore
     }
     func start() {
         guard monitorTask == nil else { return }
+        if notifyOnCompletion { ChatNotifications.shared.requestPermission() }
         // Owned by the app store so closing the window keeps the menu-bar monitor alive.
         agentMonitorTask = Task {
             while !Task.isCancelled {
@@ -199,14 +208,20 @@ import BurroCore
             }
             return session
         }
+        var completionSessions = sessions
         var warnings = localActivity.warnings
         for host in remoteHosts where host.enabled {
             guard var result = remoteSnapshots[host.id] else { continue }
             result.host = host
+            completionSessions += result.displaySessions()
             result.sessions = result.sessions.filter { $0.state != .inactive || localActivity.readState.applying(to: $0).showsCompletion }
             sessions += result.displaySessions().map { localActivity.readState.applying(to: $0) }
             if result.state == .offline { warnings.append("\(host.name): connection unavailable") }
             warnings += result.warnings.map { "\(host.name): \($0)" }
+        }
+        let completed = completionTracker.completions(in: completionSessions)
+        if notifyOnCompletion {
+            for session in completed { ChatNotifications.shared.send(session) }
         }
         agentActivity = AgentActivitySnapshot(sessions: sessions, warnings: warnings, sampledAt: localActivity.sampledAt)
     }
