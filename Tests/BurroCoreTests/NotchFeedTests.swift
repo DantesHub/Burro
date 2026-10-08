@@ -174,7 +174,9 @@ final class NotchFeedTests: XCTestCase {
         var done = agent("done", .idle); done.hasUnreadResult = true
         let sessions = [agent("running"), done, agent("waiting", .waiting), agent("running"), agent("idle", .idle)]
         let feed = NotchFeed(sessions: sessions, includeIdle: false)
-        XCTAssertEqual(feed.groups.map(\.id), ["waiting", "done", "running"])
+        XCTAssertEqual(feed.groups.map(\.id), ["waiting", "running", "done"])
+        let workspace = NotchWorkspace.grouped(feed.groups) { $0.cwd }[0]
+        XCTAssertEqual(workspace.previewGroups.map(\.id), ["waiting", "running", "done"])
         let snapshot = AgentActivitySnapshot(sessions: sessions, warnings: [], sampledAt: Date())
         XCTAssertEqual(snapshot.workingCount, 1)
         XCTAssertEqual(snapshot.attentionCount, 2)

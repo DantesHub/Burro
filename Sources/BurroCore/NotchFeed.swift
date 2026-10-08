@@ -13,9 +13,9 @@ public struct NotchGroup: Identifiable, Sendable {
     public static func priority(_ session: AgentSession) -> Int {
         if session.remote?.stale == true { return 3 }
         if session.state == .waiting { return 0 }
-        if session.showsCompletion { return 1 }
+        if session.showsCompletion { return 2 }
         switch session.state {
-        case .working: return 2
+        case .working: return 1
         case .unknown: return 3
         case .scheduled: return 4
         case .recent: return 5
