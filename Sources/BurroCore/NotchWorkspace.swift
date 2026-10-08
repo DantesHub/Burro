@@ -82,6 +82,16 @@ public struct WorkspaceSummary: Sendable {
     public init(_ workspaces: [NotchWorkspace]) { self.workspaces = workspaces }
     public func count(_ status: WorkspaceStatus) -> Int { workspaces.filter { $0.status == status }.count }
     public var workingCount: Int { count(.running) }
+    /// Count each displayed chat once, even when several chats share a checkout.
+    /// A chat with active delegated workers is still one chat.
+    public func chatCount(_ state: AgentState) -> Int {
+        let groups = workspaces.flatMap(\.groups)
+        return Set(groups.filter { group in
+            group.members.contains { $0.state == state && $0.remote?.stale != true && !group.unavailableIDs.contains($0.id) }
+        }.map(\.id)).count
+    }
+    public var runningChatCount: Int { chatCount(.working) }
+    public var scheduledChatCount: Int { chatCount(.scheduled) }
     public var waitingCount: Int { count(.waiting) }
     public var scheduledCount: Int { count(.scheduled) }
     public var needsMergeCount: Int { count(.needsMerge) }

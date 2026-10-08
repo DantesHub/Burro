@@ -53,7 +53,7 @@ struct NotchView: View {
                 compactStatus.frame(height: presentation.compactGeometry.headerHeight)
                     .contentShape(Rectangle()).onTapGesture(perform: onToggle)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Burro: \(summary.workingCount) running, \(summary.scheduledCount) scheduled, \(summary.waitingCount) need input, \(summary.doneCount) completed worktrees, \(cleanup.count) to clean up")
+                    .accessibilityLabel("Burro: \(summary.runningChatCount) running chats, \(summary.scheduledChatCount) scheduled chats, \(summary.waitingCount) need input, \(summary.doneCount) completed worktrees, \(cleanup.count) to clean up")
                     .accessibilityAddTraits(.isButton).accessibilityAction { onToggle() }
             } else {
                 VStack(spacing: 0) {
@@ -104,10 +104,10 @@ struct NotchView: View {
     }
     private var compactStatus: some View {
         HStack(spacing: 0) {
-            statusCount(summary.workingCount > 0 ? summary.workingCount : summary.scheduledCount,
-                symbol: summary.workingCount == 0 && summary.scheduledCount > 0 ? "clock" : "wrench",
-                color: summary.workingCount > 0 ? AgentState.working.color : (summary.scheduledCount > 0 ? AgentState.scheduled.color : .gray),
-                pulsing: summary.workingCount > 0)
+            statusCount(summary.runningChatCount > 0 ? summary.runningChatCount : summary.scheduledChatCount,
+                symbol: summary.runningChatCount == 0 && summary.scheduledChatCount > 0 ? "clock" : "wrench",
+                color: summary.runningChatCount > 0 ? AgentState.working.color : (summary.scheduledChatCount > 0 ? AgentState.scheduled.color : .gray),
+                pulsing: summary.runningChatCount > 0)
                 .frame(maxWidth: .infinity)
             Color.clear.frame(width: presentation.compactGeometry.hardwareGap)
             HStack(spacing: 8) {

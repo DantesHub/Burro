@@ -107,6 +107,13 @@ final class NotchFeedTests: XCTestCase {
         let staleTree = NotchWorkspace.grouped(NotchFeed(sessions: [stale], includeIdle: true).groups) { $0.cwd }[0]
         XCTAssertEqual(staleTree.runningChatCount, 0)
     }
+    func testCompactRunningCountCountsChatsInSharedCheckoutOnce() {
+        let chats = [agent("one"), agent("two"), agent("worker", parent: "one", child: true)]
+        let summary = WorkspaceSummary(NotchWorkspace.grouped(NotchFeed(sessions: chats, includeIdle: false).groups) { $0.cwd })
+        XCTAssertEqual(summary.workingCount, 1)
+        XCTAssertEqual(summary.runningChatCount, 2)
+        XCTAssertEqual(summary.scheduledChatCount, 0)
+    }
     func testHeaderCountsWorkspacesOnceWithLiveStatePriority() {
         var first = agent("one", .idle), second = agent("two", .idle), running = agent("running", .working)
         for index in 0..<2 {

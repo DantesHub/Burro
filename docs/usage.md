@@ -128,3 +128,5 @@ Chat activity and worktree Git delivery are separate. Finished chat rows stay bl
 Projects in the notch rank by running worktree count, then running chat count, then most recent session activity. Worktrees within each project rank by running chat count and then most recent activity. Old completed projects fall below active projects; stale remote sessions do not count as running.
 
 Completion notifications are enabled by default and can be turned off in Settings → Notifications. Allow Burro’s macOS notification prompt to receive banners and sounds, including while Burro is open. Alerts require an observed working/waiting/scheduled chat followed by explicit completion. Startup history, stale remote samples, and individual subagents do not generate alerts. Completion means the chat finished its turn, not that its code was committed or merged.
+
+The compact notch’s green running counter counts chats, including multiple chats sharing a worktree. Delegated workers count with their parent chat. The expanded panel’s summary continues to count worktrees.
