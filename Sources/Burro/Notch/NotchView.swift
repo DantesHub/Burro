@@ -112,7 +112,7 @@ struct NotchView: View {
             statusCount(summary.runningChatCount > 0 ? summary.runningChatCount : summary.scheduledChatCount,
                 symbol: summary.runningChatCount == 0 && summary.scheduledChatCount > 0 ? "clock" : "wrench",
                 color: summary.runningChatCount > 0 ? AgentState.working.color : (summary.scheduledChatCount > 0 ? AgentState.scheduled.color : .gray),
-                pulsing: summary.runningChatCount > 0)
+                showsRunningDot: summary.runningChatCount > 0)
                 .frame(maxWidth: .infinity)
             Color.clear.frame(width: presentation.compactGeometry.hardwareGap)
             HStack(spacing: 8) {
@@ -123,9 +123,9 @@ struct NotchView: View {
             }.frame(maxWidth: .infinity)
         }.padding(.horizontal, 8)
     }
-    private func statusCount(_ number: Int, symbol: String, color: Color, pulsing: Bool = false) -> some View {
+    private func statusCount(_ number: Int, symbol: String, color: Color, showsRunningDot: Bool = false) -> some View {
         HStack(spacing: 4) {
-            if pulsing { RunningPulse(active: store.notchEnabled && !presentation.expanded) }
+            if showsRunningDot { Circle().fill(color).frame(width: 5, height: 5).accessibilityHidden(true) }
             else { Image(systemName: symbol).font(.system(size: 8, weight: .medium)) }
             Text(store.didCheckAgents ? "\(number)" : "–").font(.system(size: 10, weight: .medium)).monospacedDigit()
         }.foregroundStyle(color).fixedSize()
