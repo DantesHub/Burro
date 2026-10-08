@@ -107,4 +107,18 @@ final class GitIntegrationTests: XCTestCase {
         let result = CommandRunner().run("/bin/sleep", ["3"], timeout: 0.05)
         XCTAssertTrue(result.timedOut); XCTAssertFalse(result.succeeded)
     }
+    func testCommandExitSignalPreservesInputOutputAndFailureStatus() {
+        let result = CommandRunner().run("/bin/cat", [], input: Data("test input".utf8))
+        XCTAssertTrue(result.succeeded)
+        XCTAssertEqual(result.output, "test input")
+        let failure = CommandRunner().run("/usr/bin/false", [])
+        XCTAssertFalse(failure.succeeded); XCTAssertFalse(failure.timedOut)
+        XCTAssertEqual(failure.code, 1)
+    }
+    func testCommandOutputLimitStillRejectsFastLargeOutput() {
+        let result = CommandRunner().run("/usr/bin/head", ["-c", "9437184", "/dev/zero"])
+        XCTAssertEqual(result.code, -2)
+        XCTAssertEqual(result.output, "")
+        XCTAssertFalse(result.succeeded)
+    }
 }

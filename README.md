@@ -31,7 +31,7 @@ cd Burro
 ./script/build_and_run.sh
 ```
 
-This builds and launches `dist/Burro.app`. Copy it to your Applications folder if you want to keep it. The build generates the dark butter icon using your Mac's system emoji font.
+This builds and launches an optimized release version of `dist/Burro.app`. Copy it to your Applications folder if you want to keep it. The build generates the dark butter icon using your Mac's system emoji font. Use `CONFIGURATION=debug` for an unoptimized development build; `--debug` also defaults to that configuration for LLDB.
 
 For an optimized local build without launching:
 

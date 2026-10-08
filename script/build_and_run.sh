@@ -2,7 +2,12 @@
 # Build a real app bundle and launch it with a stable macOS identity.
 set -euo pipefail
 MODE="${1:-run}"
-CONFIGURATION="${CONFIGURATION:-debug}"
+# The daily-running menu-bar monitor should be optimized, even when built locally.
+if [[ "$MODE" == "--debug" || "$MODE" == "debug" ]]; then
+  CONFIGURATION="${CONFIGURATION:-debug}"
+else
+  CONFIGURATION="${CONFIGURATION:-release}"
+fi
 case "$CONFIGURATION" in debug|release) ;; *) echo "CONFIGURATION must be debug or release" >&2; exit 2 ;; esac
 APP_NAME="Burro"
 BUNDLE_ID="local.burro.worktrees"

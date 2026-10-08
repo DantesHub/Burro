@@ -31,18 +31,27 @@ public enum AgentParsing {
         return isSubagent ? "Codex sub-agent" : "Untitled chat"
     }
     public static func codexCompleted(tail: String) -> Bool {
+        codexTurn(tail: tail).completed
+    }
+    struct CodexTurn: Sendable {
+        var state: AgentState?
+        var completed = false
+    }
+    static func codexTurn(tail: String) -> CodexTurn {
         for line in tail.split(separator: "\n").reversed() {
             guard let data = line.data(using: .utf8),
                   let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   event["type"] as? String == "event_msg", let payload = event["payload"] as? [String: Any],
                   let kind = payload["type"] as? String else { continue }
             switch kind {
-            case "task_complete", "turn_complete": return true
-            case "task_started", "turn_started", "task_aborted", "turn_aborted", "request_user_input", "approval_required": return false
+            case "task_complete", "turn_complete": return CodexTurn(state: .idle, completed: true)
+            case "task_started", "turn_started": return CodexTurn(state: .working)
+            case "task_aborted", "turn_aborted": return CodexTurn(state: .idle)
+            case "request_user_input", "approval_required": return CodexTurn(state: .waiting)
             default: break
             }
         }
-        return false
+        return CodexTurn()
     }
     public static func matchesClaudeStart(_ text: String, started: Date) -> Bool {
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -64,22 +73,11 @@ public enum AgentParsing {
         }
     }
     public static func codexState(tail: String, held: Int32, modified: Date?, now: Date) -> AgentState {
+        codexState(turn: codexTurn(tail: tail), held: held, modified: modified, now: now)
+    }
+    static func codexState(turn: CodexTurn, held: Int32, modified: Date?, now: Date) -> AgentState {
         if held < 0 { return .unknown }
-        // Inspect event envelopes only. Prompt and tool bodies are never retained.
-        var last: AgentState?
-        events: for line in tail.split(separator: "\n").reversed() {
-            guard let data = line.data(using: .utf8),
-                  let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  envelope["type"] as? String == "event_msg",
-                  let payload = envelope["payload"] as? [String: Any],
-                  let type = payload["type"] as? String else { continue }
-            switch type {
-            case "task_started", "turn_started": last = .working; break events
-            case "task_complete", "turn_complete", "turn_aborted", "task_aborted": last = .idle; break events
-            case "request_user_input", "approval_required": last = .waiting; break events
-            default: break
-            }
-        }
+        let last = turn.state
         if held == 1 {
             if let last { return last }
             if let modified, now.timeIntervalSince(modified) < 120 { return .working }
@@ -91,6 +89,7 @@ public enum AgentParsing {
     }
 }
 public struct AgentReader: Sendable {
+    private static let codexTurns = FileReadCache<AgentParsing.CodexTurn>()
     public init() {}
     public func read(home: String, processes: ProcessSnapshot, now: Date, readState: ProviderReadState = .empty) -> AgentInventory {
         var result = codex(home: home, now: now, unread: readState.codexUnread)
@@ -148,11 +147,16 @@ public struct AgentReader: Sendable {
                 if held != 0 || recent || (unread.contains(id) && !isSubagent) {
                     let rollout = row["rollout_path"] ?? ""
                     let modified = (try? FileManager.default.attributesOfItem(atPath: rollout)[.modificationDate]) as? Date
-                    let tail = readTail(rollout)
-                    completed = AgentParsing.codexCompleted(tail: tail ?? "")
-                    if held == 1 && tail == nil { state = .unknown; evidence = "Open writer lock; session log unavailable" }
+                    // Keep only lifecycle evidence. Lock state and age are checked live even
+                    // when the unchanged transcript's parsed evidence comes from the cache.
+                    let turn = try? Self.codexTurns.read(URL(fileURLWithPath: rollout)) { url in
+                        guard let tail = readTail(url.path) else { throw CocoaError(.fileReadUnknown) }
+                        return AgentParsing.codexTurn(tail: tail)
+                    }
+                    completed = turn?.completed ?? false
+                    if held == 1 && turn == nil { state = .unknown; evidence = "Open writer lock; session log unavailable" }
                     else {
-                        state = AgentParsing.codexState(tail: tail ?? "", held: held, modified: modified, now: now)
+                        state = AgentParsing.codexState(turn: turn ?? .init(), held: held, modified: modified, now: now)
                         evidence = held == 1 ? "Live Codex writer lock + local turn events" : (held < 0 ? "Writer lock could not be inspected" : "Local turn events; no live writer lock")
                     }
                 }

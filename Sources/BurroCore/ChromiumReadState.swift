@@ -11,7 +11,12 @@ enum ChromiumReadState {
             defer { position += count }; return Array(bytes[position..<position + count])
         }
         mutating func fixed(_ count: Int) throws -> UInt64 {
-            try take(count).enumerated().reduce(0) { $0 | UInt64($1.element) << ($1.offset * 8) }
+            guard (0...8).contains(count), position >= 0, position <= bytes.count,
+                  count <= bytes.count - position else { throw Failure.corrupt }
+            var result: UInt64 = 0
+            for offset in 0..<count { result |= UInt64(bytes[position + offset]) << (offset * 8) }
+            position += count
+            return result
         }
         mutating func varint() throws -> Int {
             var value: UInt64 = 0
@@ -110,14 +115,19 @@ enum ChromiumReadState {
         guard checksum(bytes + [kind]) == (try crc.fixed(4)) else { throw Failure.corrupt }
         switch kind { case 0: return bytes; case 1: return try snappy(bytes); default: throw Failure.unsupported }
     }
-    // Follow CURRENT + MANIFEST; obsolete tables must never resurrect deleted unread markers.
-    static func value(directory: URL, key: String) throws -> Data? {
-        let current = try read(directory.appendingPathComponent("CURRENT"))
-        let manifestName = String(decoding: current, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard manifestName.hasPrefix("MANIFEST-"), Int(manifestName.dropFirst(9)) != nil else { throw Failure.corrupt }
-        let manifestURL = directory.appendingPathComponent(manifestName), manifest = try read(manifestURL)
+    private struct Manifest: Sendable {
+        var tables: Set<Int>
+        var logNumber: Int
+        var previousLog: Int
+    }
+    private struct Match: Sendable { var sequence: UInt64; var bytes: [UInt8]? }
+    private static let manifests = FileReadCache<Manifest>()
+    private static let tableValues = FileReadCache<Match?>()
+    private static let logValues = FileReadCache<Match?>()
+
+    private static func manifest(_ url: URL) throws -> Manifest {
         var tables = Set<Int>(), logNumber = 0, previousLog = 0
-        for record in try records(manifest) {
+        for record in try records(read(url)) {
             var c = Cursor(bytes: record)
             while c.position < record.count {
                 switch try c.varint() {
@@ -135,53 +145,81 @@ enum ChromiumReadState {
             }
         }
         guard tables.count <= 256 else { throw Failure.unsupported }
+        return Manifest(tables: tables, logNumber: logNumber, previousLog: previousLog)
+    }
+
+    // Follow CURRENT + MANIFEST; obsolete tables must never resurrect deleted unread markers.
+    // Cache only each file's derived preference. A growing log need not re-decompress
+    // immutable tables or replay the entire manifest on every three-second agent poll.
+    static func value(directory: URL, key: String) throws -> Data? {
+        let current = try read(directory.appendingPathComponent("CURRENT"))
+        let manifestName = String(decoding: current, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard manifestName.hasPrefix("MANIFEST-"), Int(manifestName.dropFirst(9)) != nil else { throw Failure.corrupt }
+        let manifestURL = directory.appendingPathComponent(manifestName)
+        let manifestStamp = try FileStamp(manifestURL)
+        let snapshot = try manifests.read(manifestURL, load: manifest)
         let wanted = Array(("_https://claude.ai\0\u{1}" + key).utf8)
-        var best: (UInt64, [UInt8]?)?
-        func accept(_ k: [UInt8], _ value: [UInt8]?, _ sequence: UInt64) {
-            if k == wanted, best == nil || sequence > best!.0 { best = (sequence, value) }
+        var best: Match?
+        func accept(_ match: Match?) {
+            if let match, best == nil || match.sequence > best!.sequence { best = match }
         }
-        for number in tables {
-            let url = directory.appendingPathComponent(String(format: "%06d.ldb", number)), file = try read(url)
-            guard file.count >= 48 else { throw Failure.corrupt }
-            var magic = Cursor(bytes: Array(file.suffix(8)))
-            guard try magic.fixed(8) == 0xdb4775248b80fb57 else { throw Failure.unsupported }
-            var footer = Cursor(bytes: Array(file.suffix(48)))
-            _ = try footer.varint(); _ = try footer.varint()
-            var previous: [UInt8]?
-            for (upperKey, dataHandle) in try entries(block(file, handle: &footer)) {
-                guard upperKey.count >= 8 else { throw Failure.corrupt }
-                let upper = Array(upperKey.dropLast(8))
-                if let previous, wanted.lexicographicallyPrecedes(previous) { break }
-                previous = upper
-                if upper.lexicographicallyPrecedes(wanted) { continue }
-                // The table index isolates the preference's block. Unrelated values are
-                // neither decompressed nor parsed; duplicate versions may cross a boundary.
-                var h = Cursor(bytes: dataHandle)
-                for (k, v) in try entries(block(file, handle: &h)) {
-                    guard k.count >= 8 else { throw Failure.corrupt }
-                    var tagCursor = Cursor(bytes: Array(k.suffix(8))); let tag = try tagCursor.fixed(8)
-                    guard tag & 255 <= 1 else { throw Failure.unsupported }
-                    accept(Array(k.dropLast(8)), tag & 255 == 1 ? v : nil, tag >> 8)
+        for number in snapshot.tables {
+            let url = directory.appendingPathComponent(String(format: "%06d.ldb", number))
+            accept(try tableValues.read(url, variant: key) { url in
+                let file = try read(url)
+                var match: Match?
+                guard file.count >= 48 else { throw Failure.corrupt }
+                var magic = Cursor(bytes: Array(file.suffix(8)))
+                guard try magic.fixed(8) == 0xdb4775248b80fb57 else { throw Failure.unsupported }
+                var footer = Cursor(bytes: Array(file.suffix(48)))
+                _ = try footer.varint(); _ = try footer.varint()
+                var previous: [UInt8]?
+                for (upperKey, dataHandle) in try entries(block(file, handle: &footer)) {
+                    guard upperKey.count >= 8 else { throw Failure.corrupt }
+                    let upper = Array(upperKey.dropLast(8))
+                    if let previous, wanted.lexicographicallyPrecedes(previous) { break }
+                    previous = upper
+                    if upper.lexicographicallyPrecedes(wanted) { continue }
+                    // The table index isolates the preference's block. Unrelated values are
+                    // neither decompressed nor parsed; duplicate versions may cross a boundary.
+                    var h = Cursor(bytes: dataHandle)
+                    for (k, v) in try entries(block(file, handle: &h)) {
+                        guard k.count >= 8 else { throw Failure.corrupt }
+                        var tagCursor = Cursor(bytes: Array(k.suffix(8))); let tag = try tagCursor.fixed(8)
+                        guard tag & 255 <= 1 else { throw Failure.unsupported }
+                        if k.dropLast(8).elementsEqual(wanted), match == nil || tag >> 8 > match!.sequence {
+                            match = Match(sequence: tag >> 8, bytes: tag & 255 == 1 ? v : nil)
+                        }
+                    }
                 }
-            }
+                return match
+            })
         }
         let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-        let logs = files.filter { $0.pathExtension == "log" && Int($0.deletingPathExtension().lastPathComponent).map { $0 >= logNumber || $0 == previousLog } == true }
+        let logs = files.filter { $0.pathExtension == "log" && Int($0.deletingPathExtension().lastPathComponent).map { $0 >= snapshot.logNumber || $0 == snapshot.previousLog } == true }
         guard logs.count <= 64 else { throw Failure.unsupported }
         for file in logs {
-            for record in try records(read(file)) {
-                var c = Cursor(bytes: record); let sequence = try c.fixed(8), count = Int(try c.fixed(4))
-                guard count <= record.count, sequence <= (1 << 56) - 1 - UInt64(count) else { throw Failure.corrupt }
-                for index in 0..<count {
-                    let kind = try c.fixed(1), k = try c.string()
-                    guard kind <= 1 else { throw Failure.unsupported }
-                    accept(k, kind == 1 ? try c.string() : nil, sequence + UInt64(index))
+            accept(try logValues.read(file, variant: key) { file in
+                var match: Match?
+                for record in try records(read(file)) {
+                    var c = Cursor(bytes: record); let sequence = try c.fixed(8), count = Int(try c.fixed(4))
+                    guard count <= record.count, sequence <= (1 << 56) - 1 - UInt64(count) else { throw Failure.corrupt }
+                    for index in 0..<count {
+                        let kind = try c.fixed(1), k = try c.string()
+                        guard kind <= 1 else { throw Failure.unsupported }
+                        let value = kind == 1 ? try c.string() : nil
+                        let version = sequence + UInt64(index)
+                        if k == wanted, match == nil || version > match!.sequence {
+                            match = Match(sequence: version, bytes: value)
+                        }
+                    }
+                    guard c.position == record.count else { throw Failure.corrupt }
                 }
-                guard c.position == record.count else { throw Failure.corrupt }
-            }
+                return match
+            })
         }
-        guard try read(directory.appendingPathComponent("CURRENT")) == current, try read(manifestURL) == manifest else { throw Failure.changed }
-        guard let bytes = best?.1, let encoding = bytes.first else { return nil }
+        guard try read(directory.appendingPathComponent("CURRENT")) == current, try FileStamp(manifestURL) == manifestStamp else { throw Failure.changed }
+        guard let bytes = best?.bytes, let encoding = bytes.first else { return nil }
         switch encoding {
         case 1: return String(bytes: bytes.dropFirst(), encoding: .isoLatin1)?.data(using: .utf8)
         case 0: return String(bytes: bytes.dropFirst(), encoding: .utf16LittleEndian)?.data(using: .utf8)

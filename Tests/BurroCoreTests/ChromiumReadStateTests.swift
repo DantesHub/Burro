@@ -75,4 +75,27 @@ final class ChromiumReadStateTests: XCTestCase {
         try Data(record(batch(56, value: nil))).write(to: root.appendingPathComponent("000003.log"))
         XCTAssertNil(try ChromiumReadState.value(directory: root, key: "epitaxy-unread-v1"))
     }
+
+    func testCachedFilesFollowManifestRotationAndLogRemoval() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let current = root.appendingPathComponent("CURRENT")
+        try Data("MANIFEST-000001\n".utf8).write(to: current)
+        try Data(record([2, 3])).write(to: root.appendingPathComponent("MANIFEST-000001"))
+        let log = root.appendingPathComponent("000003.log")
+        try Data(record(batch(10, value: "unread"))).write(to: log)
+        for _ in 0..<2 {
+            XCTAssertEqual(try ChromiumReadState.value(directory: root, key: "epitaxy-unread-v1"), Data("unread".utf8))
+        }
+        XCTAssertNil(try ChromiumReadState.value(directory: root, key: "another-preference"))
+        try FileManager.default.removeItem(at: log)
+        XCTAssertNil(try ChromiumReadState.value(directory: root, key: "epitaxy-unread-v1"))
+        try Data(record(batch(11, value: "new"))).write(to: log)
+        XCTAssertEqual(try ChromiumReadState.value(directory: root, key: "epitaxy-unread-v1"), Data("new".utf8))
+        // The old log remains on disk but is obsolete under the newly selected manifest.
+        try Data(record([2, 4])).write(to: root.appendingPathComponent("MANIFEST-000002"))
+        try Data("MANIFEST-000002\n".utf8).write(to: current)
+        XCTAssertNil(try ChromiumReadState.value(directory: root, key: "epitaxy-unread-v1"))
+    }
 }

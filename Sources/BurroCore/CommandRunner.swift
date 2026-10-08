@@ -41,22 +41,28 @@ public struct CommandRunner: Sendable {
             for key in env.keys where key.hasPrefix("GIT_") { env.removeValue(forKey: key) }
             env["GIT_OPTIONAL_LOCKS"] = "0"; env["GIT_TERMINAL_PROMPT"] = "0"; env["LC_ALL"] = "C"
             process.environment = env
+            let exited = DispatchSemaphore(value: 0)
+            process.terminationHandler = { _ in exited.signal() }
             try process.run()
             let deadline = Date().addingTimeInterval(timeout)
+            func exceedsOutputLimit() -> Bool {
+                [out, err].contains { handle in
+                    var info = stat()
+                    return fstat(handle.fileDescriptor, &info) == 0 && info.st_size > 8 * 1024 * 1024
+                }
+            }
             var outputExceeded = false
             while process.isRunning && Date() < deadline {
-                outputExceeded = [outURL, errURL].contains { url in
-                    let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber
-                    return (size?.intValue ?? 0) > 8 * 1024 * 1024
-                }
+                outputExceeded = exceedsOutputLimit()
                 if outputExceeded { break }
-                Thread.sleep(forTimeInterval: 0.025)
+                // Wake immediately when a command exits. Long-running commands only need
+                // a periodic output-size check, not 40 filesystem inspections per second.
+                _ = exited.wait(timeout: .now() + max(0, min(0.25, deadline.timeIntervalSinceNow)))
             }
             let expired = process.isRunning && !outputExceeded
             if process.isRunning {
                 process.terminate()
-                let grace = Date().addingTimeInterval(0.25)
-                while process.isRunning && Date() < grace { Thread.sleep(forTimeInterval: 0.02) }
+                _ = exited.wait(timeout: .now() + 0.25)
                 if process.isRunning { kill(process.processIdentifier, SIGKILL) }
             }
             process.waitUntilExit()
@@ -65,8 +71,7 @@ public struct CommandRunner: Sendable {
                 defer { try? handle.close() }
                 return String(decoding: (try? handle.read(upToCount: 8 * 1024 * 1024)) ?? Data(), as: UTF8.self)
             }
-            let size = (try? FileManager.default.attributesOfItem(atPath: outURL.path)[.size]) as? NSNumber
-            if outputExceeded || (size?.intValue ?? 0) > 8 * 1024 * 1024 {
+            if outputExceeded || exceedsOutputLimit() {
                 return CommandResult(code: -2, output: "", error: "Command output exceeded the inspection limit", timedOut: expired)
             }
             return CommandResult(code: process.terminationStatus, output: read(outURL), error: read(errURL), timedOut: expired)

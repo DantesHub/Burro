@@ -36,6 +36,10 @@ struct NotchView: View {
     private var cleanup: [NotchCleanup] {
         NotchCleanup.inventory(worktrees: store.snapshot.worktrees, sessions: activity.sessions)
     }
+    private var compactAccessibilityLabel: String {
+        let summary = summary
+        return "Burro: \(summary.runningChatCount) running chats, \(summary.scheduledChatCount) scheduled chats, \(summary.waitingCount) need input, \(summary.doneCount) completed worktrees, \(cleanup.count) to clean up"
+    }
     private var unlistedCleanup: [NotchCleanup] {
         let visible = Set(workspaces.map(\.id))
         return cleanup.filter { !visible.contains($0.id) }
@@ -53,7 +57,7 @@ struct NotchView: View {
                 compactStatus.frame(height: presentation.compactGeometry.headerHeight)
                     .contentShape(Rectangle()).onTapGesture(perform: onToggle)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Burro: \(summary.runningChatCount) running chats, \(summary.scheduledChatCount) scheduled chats, \(summary.waitingCount) need input, \(summary.doneCount) completed worktrees, \(cleanup.count) to clean up")
+                    .accessibilityLabel(compactAccessibilityLabel)
                     .accessibilityAddTraits(.isButton).accessibilityAction { onToggle() }
             } else {
                 VStack(spacing: 0) {
@@ -103,7 +107,8 @@ struct NotchView: View {
         onContentChange()
     }
     private var compactStatus: some View {
-        HStack(spacing: 0) {
+        let summary = summary
+        return HStack(spacing: 0) {
             statusCount(summary.runningChatCount > 0 ? summary.runningChatCount : summary.scheduledChatCount,
                 symbol: summary.runningChatCount == 0 && summary.scheduledChatCount > 0 ? "clock" : "wrench",
                 color: summary.runningChatCount > 0 ? AgentState.working.color : (summary.scheduledChatCount > 0 ? AgentState.scheduled.color : .gray),
@@ -120,7 +125,7 @@ struct NotchView: View {
     }
     private func statusCount(_ number: Int, symbol: String, color: Color, pulsing: Bool = false) -> some View {
         HStack(spacing: 4) {
-            if pulsing { RunningPulse() }
+            if pulsing { RunningPulse(active: store.notchEnabled && !presentation.expanded) }
             else { Image(systemName: symbol).font(.system(size: 8, weight: .medium)) }
             Text(store.didCheckAgents ? "\(number)" : "–").font(.system(size: 10, weight: .medium)).monospacedDigit()
         }.foregroundStyle(color).fixedSize()
@@ -143,7 +148,8 @@ struct NotchView: View {
         }.padding(.horizontal, 22)
     }
     private var expandedBody: some View {
-        VStack(spacing: 0) {
+        let summary = summary
+        return VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Text("\(summary.workspaces.count + cleanup.count) worktrees").foregroundStyle(.secondary)
                 if summary.waitingCount > 0 { count(summary.waitingCount, "need you", NotchStyle.attention) }
@@ -272,7 +278,7 @@ struct NotchView: View {
                         Text("\(workspace.groups.count) \(workspace.groups.count == 1 ? "chat" : "chats")")
                             .font(.system(size: 11, weight: .bold)).monospacedDigit()
                             .foregroundStyle(.white.opacity(0.9))
-                        if workspace.status == .running { RunningPulse() }
+                        if workspace.status == .running { RunningPulse(active: store.notchEnabled && presentation.expanded) }
                         if cleanup.contains(where: { $0.id == workspace.id }) {
                             Label("Merged", systemImage: "trash").foregroundStyle(.blue)
                         } else {
@@ -466,18 +472,5 @@ extension WorkspaceStatus {
         case .done: return .blue
         default: return .secondary
         }
-    }
-}
-
-/// Timeline-driven opacity avoids animating list layout or pointer targets.
-private struct RunningPulse: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 20, paused: reduceMotion)) { context in
-            let phase = context.date.timeIntervalSinceReferenceDate * .pi
-            Circle().fill(AgentState.working.color)
-                .opacity(reduceMotion ? 1 : 0.65 + 0.25 * sin(phase))
-                .frame(width: 5, height: 5)
-        }.accessibilityHidden(true)
     }
 }

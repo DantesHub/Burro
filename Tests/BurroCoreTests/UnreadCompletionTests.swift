@@ -3,6 +3,26 @@ import XCTest
 @testable import BurroCore
 
 final class UnreadCompletionTests: XCTestCase {
+    func testClaudeCompletionCacheTracksCompletionArchivingAndMissingRecords() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let folder = home.appendingPathComponent("Library/Application Support/Claude/claude-code-sessions/account/org")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let record = folder.appendingPathComponent("local_fixture.json")
+        func write(turns: Int, archived: Bool) throws {
+            try JSONSerialization.data(withJSONObject: ["sessionId": "local_fixture", "completedTurns": turns, "isArchived": archived]).write(to: record)
+        }
+        try write(turns: 0, archived: false)
+        XCTAssertEqual(ProviderReadState.claudeCompletedSessions(home: home.path), [])
+        try write(turns: 1, archived: false)
+        for _ in 0..<2 { XCTAssertEqual(ProviderReadState.claudeCompletedSessions(home: home.path), ["local_fixture"]) }
+        try write(turns: 1, archived: true)
+        XCTAssertEqual(ProviderReadState.claudeCompletedSessions(home: home.path), [])
+        try write(turns: 1, archived: false)
+        XCTAssertEqual(ProviderReadState.claudeCompletedSessions(home: home.path), ["local_fixture"])
+        try FileManager.default.removeItem(at: record)
+        XCTAssertEqual(ProviderReadState.claudeCompletedSessions(home: home.path), [])
+    }
     let id = "11111111-2222-4333-8444-555555555555"
     func agent(_ state: AgentState = .idle) -> AgentSession {
         AgentSession(id: "codex:\(id)", provider: .codex, title: "Fixture", cwd: "/tmp/fixture", state: state,

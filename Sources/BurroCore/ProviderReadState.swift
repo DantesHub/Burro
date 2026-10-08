@@ -76,6 +76,7 @@ public struct ProviderReadState: Sendable {
         return result
     }
 
+    private static let claudeCompletions = FileReadCache<String?>()
     static func claudeCompletedSessions(home: String) -> Set<String> {
         let root = URL(fileURLWithPath: home).appendingPathComponent("Library/Application Support/Claude/claude-code-sessions")
         let fm = FileManager.default
@@ -85,10 +86,15 @@ public struct ProviderReadState: Sendable {
             for org in (try? fm.contentsOfDirectory(at: account, includingPropertiesForKeys: nil)) ?? [] {
                 for file in (try? fm.contentsOfDirectory(at: org, includingPropertiesForKeys: nil)) ?? []
                     where file.lastPathComponent.hasPrefix("local_") && file.pathExtension == "json" {
-                    guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size < 1024 * 1024,
-                          let data = try? Data(contentsOf: file), let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          (record["completedTurns"] as? Int ?? 0) > 0, record["isArchived"] as? Bool != true,
-                          let id = record["sessionId"] as? String else { continue }
+                    let id = try? claudeCompletions.read(file) { url -> String? in
+                        let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+                        let data = try handle.read(upToCount: 1024 * 1024) ?? Data()
+                        guard data.count < 1024 * 1024,
+                              let record = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              (record["completedTurns"] as? Int ?? 0) > 0, record["isArchived"] as? Bool != true else { return nil }
+                        return record["sessionId"] as? String
+                    }
+                    guard let id else { continue }
                     result.insert(id)
                 }
             }
