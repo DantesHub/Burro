@@ -27,11 +27,24 @@ final class NotchFeedTests: XCTestCase {
     func testCodeOnlyFeedHidesConversationsWithoutChangingSafetyInventory() {
         var edited = agent("edited")
         edited.edits = ChatEdits(hasEdits: true, added: 12, removed: 3, exact: true)
-        var conversation = agent("conversation")
+        var conversation = agent("conversation", .idle)
         conversation.edits = ChatEdits(hasEdits: false, added: 0, removed: 0, exact: true)
         let feed = NotchFeed(sessions: [edited, conversation], includeIdle: true, codeOnly: true)
         XCTAssertEqual(feed.groups.map(\.id), ["edited"])
         XCTAssertEqual(feed.inventory.count, 2)
+    }
+    func testActiveChatsStayVisibleBeforeTheirFirstEdit() {
+        for state in [AgentState.working, .waiting, .scheduled] {
+            var chat = agent("no-edits", state)
+            chat.edits = ChatEdits(hasEdits: false, added: 0, removed: 0, exact: true)
+            let feed = NotchFeed(sessions: [chat], includeIdle: false, codeOnly: true)
+            XCTAssertEqual(feed.groups.map(\.id), [chat.id])
+            if state == .working {
+                XCTAssertEqual(WorkspaceSummary(NotchWorkspace.grouped(feed.groups) { $0.cwd }).workingCount, 1)
+            }
+            chat.state = .idle; chat.turnCompleted = true
+            XCTAssertTrue(NotchFeed(sessions: [chat], includeIdle: true, codeOnly: true).groups.isEmpty)
+        }
     }
     func testCodeOnlyFeedKeepsActiveChatsWithIncompleteRemoteEdits() {
         var sessions: [AgentSession] = []
