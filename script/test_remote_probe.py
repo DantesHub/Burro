@@ -133,6 +133,18 @@ class ProbeTests(unittest.TestCase):
             self.assertFalse(result['hasEdits'])
             self.assertFalse(result['exact'])
 
+    def test_live_codex_turn_survives_large_tool_output_and_silence(self):
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.jsonl') as log:
+            log.write(json.dumps(dict(type='event_msg', payload=dict(type='task_started'))) + '\n')
+            log.write(json.dumps(dict(type='response_item', payload=dict(output='x' * (2 * probe.TAIL_LIMIT)))) + '\n')
+            log.flush()
+            modified, tail = probe.codex_tail(log.name, 1, time.monotonic() + 2)
+            self.assertEqual(probe.codex_state(tail, 1, modified, modified + 600), 'Working')
+            log.write(json.dumps(dict(type='event_msg', payload=dict(type='task_complete'))) + '\n'); log.flush()
+            modified, tail = probe.codex_tail(log.name, 1, time.monotonic() + 2)
+            self.assertEqual(probe.codex_state(tail, 1, modified, modified + 600), 'Open · idle')
+            self.assertTrue(probe.codex_completed(tail))
+
     def worker_event(self, sid, agent='worker-a', age=0, stop='tool_use', started=None):
         from datetime import datetime, timezone
         stamp = time.time() - age if started is None else started

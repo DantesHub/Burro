@@ -282,6 +282,31 @@ def held_lock(path):
         return -1
 
 
+def codex_tail(path, held, deadline):
+    """Recover lifecycle evidence displaced by large tool outputs for live writers."""
+    lifecycle = {"task_started", "turn_started", "task_complete", "turn_complete",
+                 "turn_aborted", "task_aborted", "request_user_input", "approval_required"}
+    with open(path, "rb") as handle:
+        size = os.fstat(handle.fileno()).st_size
+        modified = os.fstat(handle.fileno()).st_mtime
+        limit = TAIL_LIMIT
+        while True:
+            handle.seek(max(0, size - limit))
+            tail = handle.read(limit).decode("utf-8", errors="replace")
+            if held != 1 or limit >= size:
+                return modified, tail
+            for line in reversed(tail.splitlines()):
+                try:
+                    obj = json.loads(line)
+                    if obj.get("type") == "event_msg" and obj.get("payload", {}).get("type") in lifecycle:
+                        return modified, tail
+                except (ValueError, AttributeError, TypeError):
+                    pass
+            if limit >= 16 * 1024 * 1024 or time.monotonic() >= deadline:
+                return modified, tail
+            limit *= 2
+
+
 def codex_state(tail, held, modified, now):
     if held < 0:
         return "Unknown"
@@ -683,11 +708,7 @@ def collect(home):
                         continue
                     modified, tail = None, ""
                     try:
-                        with open(rollout, "rb") as handle:
-                            handle.seek(0, 2)
-                            handle.seek(max(0, handle.tell() - TAIL_LIMIT))
-                            tail = handle.read(TAIL_LIMIT).decode("utf-8", errors="replace")
-                            modified = os.fstat(handle.fileno()).st_mtime
+                        modified, tail = codex_tail(rollout, held, deadline - 3)
                         state = codex_state(tail, held, modified, now)
                     except (OSError, TypeError):
                         state = "Unknown" if held != 0 else "Inactive"
