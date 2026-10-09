@@ -79,23 +79,23 @@ final class NotchHoverTests: XCTestCase {
         state.advance(now: 4.13)
         XCTAssertFalse(state.expanded)
     }
-    func testApproachMarginAndPhysicalTopEdgeAreInteractive() {
+    func testOpeningRequiresCompactBoundsAndIncludesPhysicalTopEdge() {
         let compact = CGRect(x: 400, y: 866, width: 293, height: 34)
         let expanded = CGRect(x: 306.5, y: 527, width: 480, height: 373)
-        for point in [CGPoint(x: 546, y: 900), CGPoint(x: 546, y: 859), CGPoint(x: 394, y: 880)] {
-            XCTAssertTrue(NotchHoverRegion.contains(point, compact: compact, expanded: expanded, isExpanded: false, isClosing: false))
+        for point in [CGPoint(x: 546, y: 900), CGPoint(x: 546, y: 866), CGPoint(x: 400, y: 880), CGPoint(x: 693, y: 880)] {
+            XCTAssertTrue(NotchHoverRegion.contains(point, compact: compact, expanded: expanded, isExpanded: false))
         }
-        XCTAssertFalse(NotchHoverRegion.contains(CGPoint(x: 546, y: 901), compact: compact, expanded: expanded, isExpanded: false, isClosing: false))
-        XCTAssertFalse(NotchHoverRegion.contains(CGPoint(x: 546, y: 857), compact: compact, expanded: expanded, isExpanded: false, isClosing: false))
+        for point in [CGPoint(x: 546, y: 901), CGPoint(x: 546, y: 865), CGPoint(x: 399, y: 880), CGPoint(x: 694, y: 880)] {
+            XCTAssertFalse(NotchHoverRegion.contains(point, compact: compact, expanded: expanded, isExpanded: false))
+        }
     }
-    func testExpandedEdgeToleranceAndClosingRegionDoNotChasePointer() {
+    func testExpandedToleranceCannotOpenCollapsedIsland() {
         let compact = CGRect(x: -546, y: 866, width: 293, height: 34)
         let expanded = CGRect(x: -640, y: 527, width: 480, height: 373)
         let point = CGPoint(x: -400, y: 519)
-        XCTAssertTrue(NotchHoverRegion.contains(point, compact: compact, expanded: expanded, isExpanded: true, isClosing: false))
-        XCTAssertTrue(NotchHoverRegion.contains(point, compact: compact, expanded: expanded, isExpanded: false, isClosing: true))
-        XCTAssertFalse(NotchHoverRegion.contains(point, compact: compact, expanded: expanded, isExpanded: false, isClosing: false))
-        XCTAssertFalse(NotchHoverRegion.contains(CGPoint(x: -400, y: 516), compact: compact, expanded: expanded, isExpanded: true, isClosing: false))
+        XCTAssertTrue(NotchHoverRegion.contains(point, compact: compact, expanded: expanded, isExpanded: true))
+        XCTAssertFalse(NotchHoverRegion.contains(point, compact: compact, expanded: expanded, isExpanded: false))
+        XCTAssertFalse(NotchHoverRegion.contains(CGPoint(x: -400, y: 516), compact: compact, expanded: expanded, isExpanded: true))
     }
     func testCompactFootprintLeavesOnlySmallStatusWings() {
         let screen = CGRect(x: 0, y: 0, width: 1728, height: 1117)

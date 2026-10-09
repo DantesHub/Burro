@@ -52,8 +52,10 @@ public struct NotchMotion: Sendable {
 // Global screen coordinates keep hover intent independent of native view/window tracking churn.
 public enum NotchHoverRegion {
     public static func contains(_ point: CGPoint, compact: CGRect, expanded: CGRect,
-                                isExpanded: Bool, isClosing: Bool) -> Bool {
-        let area = (isExpanded || isClosing ? expanded.insetBy(dx: -10, dy: -10) : compact.insetBy(dx: -8, dy: -8))
+                                isExpanded: Bool) -> Bool {
+        // Opening requires the compact island itself. Exit tolerance is only for an
+        // already-open panel; its fading footprint must never reopen it during collapse.
+        let area = isExpanded ? expanded.insetBy(dx: -10, dy: -10) : compact
         // Include the physical top edge; CGRect.contains excludes its maximum coordinates.
         return point.x >= area.minX && point.x <= area.maxX && point.y >= area.minY && point.y <= min(compact.maxY, area.maxY)
     }

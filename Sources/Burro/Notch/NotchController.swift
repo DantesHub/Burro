@@ -143,8 +143,7 @@ import BurroCore
     private func containsPointer() -> Bool {
         guard let panel, panel.isVisible else { return false }
         return NotchHoverRegion.contains(pointerLocation(), compact: presentation.compactGeometry.frame,
-            expanded: presentation.expandedGeometry.frame, isExpanded: presentation.expanded,
-            isClosing: transitionID != nil && !presentation.expanded)
+            expanded: presentation.expandedGeometry.frame, isExpanded: presentation.expanded)
     }
     func samplePointer(source: String = "reconcile") {
         guard store?.notchEnabled == true, !placingWindow else { return }

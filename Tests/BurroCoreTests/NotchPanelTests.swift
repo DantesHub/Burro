@@ -64,16 +64,38 @@ final class NotchPanelTests: XCTestCase {
         }
     }
 
-    @MainActor func testApproachingBelowNativeWindowOpensImmediatelyAndTopEdgeRemainsInside() async throws {
+    @MainActor func testPointerOutsideCompactWindowDoesNotOpenAndTopEdgeDoes() async throws {
         try await withController { controller, move in
             let frame = try XCTUnwrap(controller.panel).frame
             move(NSPoint(x: frame.midX, y: frame.minY - 6))
             controller.samplePointer()
-            XCTAssertTrue(controller.presentation.expanded, "Approach must work outside the native window's tracking area")
+            XCTAssertFalse(controller.presentation.expanded, "Nearby content below the island must not open it")
+            move(NSPoint(x: frame.minX - 6, y: frame.midY)); controller.samplePointer()
+            XCTAssertFalse(controller.presentation.expanded, "Nearby menu-bar items must not open it")
             move(NSPoint(x: frame.midX, y: frame.maxY))
             controller.samplePointer()
             try await Task.sleep(for: .milliseconds(180))
             XCTAssertTrue(controller.presentation.expanded, "The physical top edge must not be treated as an exit")
+        }
+    }
+
+    @MainActor func testFadingExpandedFootprintCannotReopenCollapsedIsland() async throws {
+        try await withController { controller, move in
+            let compact = try XCTUnwrap(controller.panel).frame
+            controller.show()
+            try await Task.sleep(for: .milliseconds(500))
+            let expanded = try XCTUnwrap(controller.panel).frame
+            move(NSPoint(x: expanded.midX, y: expanded.midY)); controller.samplePointer()
+            move(NSPoint(x: expanded.midX, y: expanded.minY - 20)); controller.samplePointer()
+            try await Task.sleep(for: .milliseconds(180))
+            XCTAssertFalse(controller.presentation.expanded)
+            // The native window still covers this point during the closing animation.
+            move(NSPoint(x: expanded.midX, y: expanded.midY)); controller.samplePointer()
+            XCTAssertFalse(controller.presentation.expanded, "Invisible expanded content must not reopen the island")
+            try await Task.sleep(for: .milliseconds(500))
+            XCTAssertFalse(controller.presentation.expanded)
+            move(NSPoint(x: compact.midX, y: compact.maxY)); controller.samplePointer()
+            XCTAssertTrue(controller.presentation.expanded, "The compact island remains interactive")
         }
     }
 
@@ -146,16 +168,17 @@ final class NotchPanelTests: XCTestCase {
     @MainActor func testReentryReversesClosingAndOldCompletionCannotShrinkReopenedWindow() async throws {
         try await withController { controller, move in
             let panel = try XCTUnwrap(controller.panel)
+            let compact = panel.frame
             controller.show()
             try await Task.sleep(for: .milliseconds(650))
             let expanded = panel.frame
-            let inside = NSPoint(x: expanded.midX, y: expanded.midY)
+            let inside = NSPoint(x: compact.midX, y: compact.midY)
             move(inside); controller.samplePointer()
             move(NSPoint(x: expanded.midX, y: expanded.minY - 20)); controller.samplePointer()
             try await Task.sleep(for: .milliseconds(155))
             XCTAssertFalse(controller.presentation.expanded)
             move(inside); controller.samplePointer()
-            XCTAssertTrue(controller.presentation.expanded, "Reentry during closing must not wait for another dwell")
+            XCTAssertTrue(controller.presentation.expanded, "Reentry into the compact island must reverse closing immediately")
             try await Task.sleep(for: .milliseconds(700))
             XCTAssertEqual(panel.frame, expanded)
             XCTAssertTrue(controller.presentation.expanded)
